@@ -1,0 +1,74 @@
+# Windows 설치 파일(.exe)을 만듭니다.
+#
+#  · main 에 푸시 → Actions 실행 페이지의 Artifacts 에서 내려받기
+#  · v* 태그 푸시 → Releases 에 exe 를 첨부
+#  · 수동 실행    → Actions 탭에서 Run workflow
+#
+# 실제 Windows 환경(windows-latest)에서 빌드하므로 서명 없이도 바로 실행됩니다.
+# (다만 Windows SmartScreen 이 "알 수 없는 게시자" 경고를 띄울 수 있습니다 — 정상입니다.)
+name: Windows exe
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: Windows 설치 파일 빌드 (NSIS + 포터블)
+        run: npm run dist
+
+      - name: 이름 붙이기
+        id: exe
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            LABEL="${GITHUB_REF_NAME}"
+          else
+            LABEL="${VERSION}-${GITHUB_SHA::7}"
+          fi
+          echo "label=${LABEL}" >> "$GITHUB_OUTPUT"
+          ls -lh dist
+
+      - name: Artifact 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: jeonpyo-cheol-windows-${{ steps.exe.outputs.label }}
+          path: |
+            dist/*.exe
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: 태그면 Release 에 첨부
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.exe \
+            --title "전표철 (Windows) ${GITHUB_REF_NAME}" \
+            --notes "Windows 설치 파일입니다. \`전표철-Setup-*.exe\` 는 설치형, \`전표철-Portable-*.exe\` 는 설치 없이 바로 실행하는 버전입니다.
+
+          서명이 없어 실행 시 \"Windows의 PC 보호\" 경고가 뜰 수 있습니다 — \"추가 정보\" → \"실행\" 을 누르면 됩니다." \
+            || gh release upload "${GITHUB_REF_NAME}" dist/*.exe --clobber

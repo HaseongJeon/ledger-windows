@@ -1,0 +1,42 @@
+{
+  "name": "jeonpyo-cheol-windows",
+  "version": "1.0.0",
+  "private": true,
+  "description": "전표철 — Windows 데스크톱 앱 (Electron)",
+  "main": "main.js",
+  "scripts": {
+    "sync": "node scripts/sync-app.mjs",
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.jeonpyo.ledger",
+    "productName": "전표철",
+    "asar": true,
+    "files": [
+      "main.js",
+      "app/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
+    }
+  }
+}
