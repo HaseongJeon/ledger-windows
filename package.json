@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "description": "전표철 — Windows 데스크톱 앱 (Electron)",
+  "author": "HaseongJeon",
   "main": "main.js",
   "scripts": {
     "sync": "node scripts/sync-app.mjs",
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win --publish never"
   },
   "devDependencies": {
     "electron": "^32.2.0",
