@@ -320,6 +320,7 @@ button{ cursor:pointer; }
 .cal__amt--in{ color: var(--plate); font-weight:600; }
 .cal__amt--out{ color: var(--rose); }
 .cal__due{ position:absolute; top:5px; right:5px; width:5px; height:5px; border-radius:50%; background: var(--amber); }
+.cal__resv{ position:absolute; top:5px; left:5px; width:5px; height:5px; border-radius:50%; background: var(--smoke); }
 
 .callegend{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:9px 2px 0; font-size:11px; color: var(--ink-3); }
 .callegend__i{ font-weight:600; display:flex; align-items:center; gap:5px; }

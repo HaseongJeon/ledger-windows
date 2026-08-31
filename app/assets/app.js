@@ -279,10 +279,11 @@ function renderSlips() {
 }
 
 function slipCard(c) {
-  return `<button class="slip" type="button" data-id="${c.id}" data-type="${esc(c.workType)}">
+  const primary = c.items?.[0]?.type || "";
+  return `<button class="slip" type="button" data-id="${c.id}" data-type="${esc(primary)}">
     <span class="slip__top">
       <span class="slip__date">${C.fmtDateFull(c.date)}</span>
-      <span class="slip__type" data-t="${esc(c.workType)}">${esc(c.workType)}</span>
+      ${(c.items || []).map(i => `<span class="slip__type" data-t="${esc(i.type)}">${esc(i.type)}</span>`).join("")}
       <span class="slip__price won">${C.won(c.price)}</span>
     </span>
     <span class="slip__mid">
@@ -309,7 +310,7 @@ function slipTable(rows) {
     <tbody>${rows.map(c => `<tr data-id="${c.id}">
       <td>${C.fmtDateFull(c.date)}</td><td>${esc(c.company)}</td><td>${esc(c.dealer)}</td>
       <td>${esc(c.phone)}</td><td>${esc(c.carModel)}</td>
-      <td><span class="plate">${esc(c.plate)}</span></td><td>${esc(c.workType)}</td>
+      <td><span class="plate">${esc(c.plate)}</span></td><td>${(c.items || []).map(i => esc(i.type)).join(" + ")}</td>
       <td class="num">${C.won(c.price)}</td><td>${esc(c.payMethod)}</td>
       <td class="num">${c.unpaid ? C.won(c.unpaid) : "—"}</td>
       <td class="num">${C.won(c.cost)}</td><td>${esc(c.note)}</td>
@@ -345,10 +346,14 @@ const emptyBox = (t, s) => `<div class="empty"><p class="empty__t">${esc(t)}</p>
 function caseForm(existing, defaults = {}) {
   const c = existing || {
     date: defaults.date || C.todayISO(), company: "", dealer: "", phone: "", carModel: "", plate: "",
-    workType: "선팅", price: 0, payMethod: "카드", unpaid: 0, cost: 0, note: ""
+    items: [{ type: "선팅", price: 0, cost: 0 }], payMethod: "카드", unpaid: 0, note: ""
   };
   const companies = [...new Set(S.store.cases.map(x => x.company).filter(Boolean))];
   const dealers = [...new Set(S.store.cases.map(x => x.dealer).filter(Boolean))];
+
+  let selected = (c.items?.length ? c.items.map(i => i.type) : ["선팅"]);
+  const itemVals = {};
+  (c.items || []).forEach(i => { itemVals[i.type] = { price: i.price || 0, cost: i.cost || 0 }; });
 
   openModal({
     title: existing ? "전표 수정" : "신규 전표",
@@ -368,16 +373,11 @@ function caseForm(existing, defaults = {}) {
         <label class="field"><span class="field__label">차종</span><input id="c-model" value="${esc(c.carModel)}" placeholder="그랜저 IG"></label>
       </div>
 
-      <p class="form__sec">작업내용</p>
-      <div class="seg" id="c-type">
-        ${C.WORK_TYPES.map(t => `<button class="seg__b ${c.workType === t ? "is-on" : ""}" data-v="${t}" type="button">${t}</button>`).join("")}
-      </div>
+      <p class="form__sec">작업내용 <span class="hint" style="display:inline">(여러 개 고를 수 있습니다)</span></p>
+      <div class="finder__chips" id="c-type"></div>
 
       <p class="form__sec">금액</p>
-      <div class="form__2">
-        <label class="field field--money"><span class="field__label">견적가</span><input id="c-price" inputmode="numeric" placeholder="0" value="${c.price || ""}"></label>
-        <label class="field field--money"><span class="field__label">원가</span><input id="c-cost" inputmode="numeric" placeholder="0" value="${c.cost || ""}"></label>
-      </div>
+      <div id="c-items"></div>
 
       <p class="form__sec">결제</p>
       <div class="seg" id="c-pay">
@@ -396,16 +396,65 @@ function caseForm(existing, defaults = {}) {
            <button class="btn btn--plate" id="c-save" type="button">${existing ? "저장" : "전표 추가"}</button>`
   });
 
-  const recalc = () => {
-    const p = money($("#c-price")), co = money($("#c-cost")), u = $("#c-hasdue").checked ? money($("#c-unpaid")) : 0;
-    $("#c-calc").textContent = `실입금 ${C.won(p - u)}원 · 마진 ${C.won(p - co)}원`;
-  };
-  attachMoney($("#c-price"), recalc);
-  attachMoney($("#c-cost"), recalc);
-  attachMoney($("#c-unpaid"), recalc);
-  recalc();
+  const itemsTotal = () => selected.reduce((s, t) => {
+    const v = itemVals[t] || { price: 0, cost: 0 };
+    return { price: s.price + (v.price || 0), cost: s.cost + (v.cost || 0) };
+  }, { price: 0, cost: 0 });
 
-  segment("#c-type"); segment("#c-pay");
+  const recalc = () => {
+    const { price, cost } = itemsTotal();
+    const u = $("#c-hasdue")?.checked ? money($("#c-unpaid")) : 0;
+    $("#c-calc").textContent = selected.length > 1
+      ? `합계 견적가 ${C.won(price)}원 · 합계 원가 ${C.won(cost)}원 · 실입금 ${C.won(price - u)}원 · 마진 ${C.won(price - cost)}원`
+      : `실입금 ${C.won(price - u)}원 · 마진 ${C.won(price - cost)}원`;
+  };
+
+  function renderTypeChips() {
+    $("#c-type").innerHTML = C.WORK_TYPES.map(t =>
+      `<button class="chip ${selected.includes(t) ? "is-on" : ""}" data-type="${t}" type="button">${t}</button>`
+    ).join("");
+  }
+  function renderItems() {
+    if (selected.length <= 1) {
+      const t = selected[0] || "";
+      const v = itemVals[t] || { price: 0, cost: 0 };
+      $("#c-items").innerHTML = `<div class="form__2">
+        <label class="field field--money"><span class="field__label">견적가</span><input id="c-price" inputmode="numeric" placeholder="0" value="${v.price || ""}"></label>
+        <label class="field field--money"><span class="field__label">원가</span><input id="c-cost" inputmode="numeric" placeholder="0" value="${v.cost || ""}"></label>
+      </div>`;
+      attachMoney($("#c-price"), () => { itemVals[t] = itemVals[t] || { price: 0, cost: 0 }; itemVals[t].price = money($("#c-price")); recalc(); });
+      attachMoney($("#c-cost"), () => { itemVals[t] = itemVals[t] || { price: 0, cost: 0 }; itemVals[t].cost = money($("#c-cost")); recalc(); });
+    } else {
+      $("#c-items").innerHTML = selected.map(t => {
+        const v = itemVals[t] || { price: 0, cost: 0 };
+        return `<div class="form__2">
+          <label class="field field--money"><span class="field__label">${t} 견적가</span><input class="c-item-price" data-type="${t}" inputmode="numeric" placeholder="0" value="${v.price || ""}"></label>
+          <label class="field field--money"><span class="field__label">${t} 원가</span><input class="c-item-cost" data-type="${t}" inputmode="numeric" placeholder="0" value="${v.cost || ""}"></label>
+        </div>`;
+      }).join("");
+      $$("#c-items .c-item-price").forEach(el => attachMoney(el, () => {
+        itemVals[el.dataset.type] = itemVals[el.dataset.type] || { price: 0, cost: 0 };
+        itemVals[el.dataset.type].price = money(el); recalc();
+      }));
+      $$("#c-items .c-item-cost").forEach(el => attachMoney(el, () => {
+        itemVals[el.dataset.type] = itemVals[el.dataset.type] || { price: 0, cost: 0 };
+        itemVals[el.dataset.type].cost = money(el); recalc();
+      }));
+    }
+    recalc();
+  }
+  renderTypeChips(); renderItems();
+  $("#c-type").addEventListener("click", e => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    const t = b.dataset.type;
+    if (selected.includes(t)) { if (selected.length > 1) selected = selected.filter(x => x !== t); }
+    else selected = [...selected, t];
+    renderTypeChips(); renderItems();
+  });
+
+  attachMoney($("#c-unpaid"), recalc);
+
+  segment("#c-pay");
   $("#c-hasdue").onchange = e => { $("#c-duewrap").hidden = !e.target.checked; recalc(); };
 
   /* 알잘딱: 딜러 이름을 이미 쓴 적 있으면 상사명·연락처를 채워 준다 */
@@ -423,6 +472,8 @@ function caseForm(existing, defaults = {}) {
   });
 
   $("#c-save").onclick = async () => {
+    const { price, cost } = itemsTotal();
+    const items = selected.map(t => ({ type: t, price: (itemVals[t]?.price) || 0, cost: (itemVals[t]?.cost) || 0 }));
     const rec = {
       id: existing?.id,
       date: $("#c-date").value || C.todayISO(),
@@ -431,11 +482,11 @@ function caseForm(existing, defaults = {}) {
       phone: $("#c-phone").value.trim(),
       carModel: $("#c-model").value.trim(),
       plate: $("#c-plate").value.trim(),
-      workType: $("#c-type .is-on")?.dataset.v || "선팅",
-      price: money($("#c-price")),
+      items,
+      price,
       payMethod: $("#c-pay .is-on")?.dataset.v || "카드",
       unpaid: $("#c-hasdue").checked ? money($("#c-unpaid")) : 0,
-      cost: money($("#c-cost")),
+      cost,
       note: $("#c-note").value.trim()
     };
     if (!rec.company) return toast("상사명을 넣어 주세요");
@@ -575,6 +626,76 @@ function expRow(e) {
   </button>`;
 }
 
+function resvRow(r) {
+  const types = (r.types || []).join(" · ");
+  return `<button class="exp" type="button" data-id="${r.id}">
+    <span class="exp__dot" style="background:var(--smoke)"></span>
+    <span class="exp__body">
+      <span class="exp__cat">${esc(r.company || "예약")}${types ? `<span class="exp__rec">${esc(types)}</span>` : ""}</span><br>
+      <span class="exp__when">${esc(r.dealer || "")}${r.phone ? " · " + esc(r.phone) : ""}${r.note ? " · " + esc(r.note) : ""}</span>
+    </span>
+  </button>`;
+}
+
+function reservationForm(existing, defaults = {}) {
+  const r = existing || {
+    date: defaults.date || C.todayISO(), company: "", dealer: "", phone: "", carModel: "", plate: "",
+    types: [], note: ""
+  };
+  let selected = [...(r.types || [])];
+
+  openModal({
+    title: existing ? "예약 수정" : "작업 예약",
+    body: `<div class="form">
+      <div class="form__2">
+        <label class="field"><span class="field__label">날짜</span><input id="r-date" type="date" value="${r.date}"></label>
+        <label class="field"><span class="field__label">차량번호</span><input id="r-plate" value="${esc(r.plate)}" placeholder="12가 3456"></label>
+      </div>
+      <div class="form__2">
+        <label class="field"><span class="field__label">상사명</span><input id="r-company" value="${esc(r.company)}" placeholder="대성모터스"></label>
+        <label class="field"><span class="field__label">딜러명</span><input id="r-dealer" value="${esc(r.dealer)}" placeholder="김성호"></label>
+      </div>
+      <div class="form__2">
+        <label class="field"><span class="field__label">연락처</span><input id="r-phone" type="tel" value="${esc(r.phone)}" placeholder="010-0000-0000"></label>
+        <label class="field"><span class="field__label">차종</span><input id="r-model" value="${esc(r.carModel)}" placeholder="그랜저 IG"></label>
+      </div>
+      <p class="form__sec">예정 작업 <span class="hint" style="display:inline">(여러 개 고를 수 있습니다)</span></p>
+      <div class="finder__chips" id="r-type">
+        ${C.WORK_TYPES.map(t => `<button class="chip ${selected.includes(t) ? "is-on" : ""}" data-type="${t}" type="button">${t}</button>`).join("")}
+      </div>
+      <label class="field"><span class="field__label">메모</span><textarea id="r-note" placeholder="예약 관련 메모">${esc(r.note)}</textarea></label>
+    </div>`,
+    foot: `${existing ? `<button class="btn btn--danger btn--icononly" id="r-del" type="button">삭제</button>` : ""}
+           <button class="btn" data-close type="button">취소</button>
+           <button class="btn btn--plate" id="r-save" type="button">${existing ? "저장" : "예약 등록"}</button>`
+  });
+
+  $("#r-type").addEventListener("click", e => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    b.classList.toggle("is-on");
+    selected = $$("#r-type .chip.is-on").map(x => x.dataset.type);
+  });
+
+  $("#r-save").onclick = async () => {
+    const rec = {
+      id: existing?.id,
+      date: $("#r-date").value || C.todayISO(),
+      company: $("#r-company").value.trim(),
+      dealer: $("#r-dealer").value.trim(),
+      phone: $("#r-phone").value.trim(),
+      carModel: $("#r-model").value.trim(),
+      plate: $("#r-plate").value.trim(),
+      types: selected,
+      note: $("#r-note").value.trim()
+    };
+    if (!rec.company) return toast("상사명을 넣어 주세요");
+    try { await S.saveReservation(rec); closeModal(); toast(existing ? "저장했습니다" : "예약을 등록했습니다"); }
+    catch (err) { toast("저장 실패: " + (err.message || err)); }
+  };
+  if (existing) $("#r-del").onclick = () =>
+    confirmDelete(`${existing.company || "예약"} · ${C.fmtDateFull(existing.date)}`, () => S.deleteReservation(existing.id));
+}
+
 function expenseForm(existing, defaults = {}) {
   const e = existing || {
     amount: 0, category: "소모품비", recurring: false,
@@ -665,7 +786,7 @@ function shiftMonth(n) {
 
 function monthOf() {
   const y = state.calMonth.getFullYear(), m = state.calMonth.getMonth();
-  return { y, m, ...C.monthLedger(S.store.cases, S.store.expenses, y, m) };
+  return { y, m, ...C.monthLedger(S.store.cases, S.store.expenses, S.store.reservations, y, m) };
 }
 
 function renderCalendar() {
@@ -685,13 +806,14 @@ function renderCalendar() {
       "cal__d",
       d.iso === today ? "cal__d--today" : "",
       d.iso === state.calSel ? "is-sel" : "",
-      (d.in || d.out) ? "cal__d--has" : ""
+      (d.in || d.out || d.resv.length) ? "cal__d--has" : ""
     ].join(" ");
     html += `<button class="${cls}" type="button" data-iso="${d.iso}">
       <span class="cal__n">${n}</span>
       <span class="cal__amt cal__amt--in">${d.in ? "+" + C.shortWon(d.in) : ""}</span>
       <span class="cal__amt cal__amt--out">${d.out ? "−" + C.shortWon(d.out) : ""}</span>
       ${d.unpaid ? `<span class="cal__due" title="미수 ${C.won(d.unpaid)}원"></span>` : ""}
+      ${d.resv.length ? `<span class="cal__resv" title="예약 ${d.resv.length}건"></span>` : ""}
     </button>`;
   }
   const tail = (7 - ((startPad + last) % 7)) % 7;
@@ -732,7 +854,7 @@ function renderDayCard(lastDay) {
     host.innerHTML = `<p class="hint" style="text-align:center;padding:6px 0 2px">날짜를 누르면 그날 들어온 돈과 나간 돈을 자세히 볼 수 있습니다.</p>`;
     return;
   }
-  const d = C.dayLedger(S.store.cases, S.store.expenses, state.calSel, lastDay);
+  const d = C.dayLedger(S.store.cases, S.store.expenses, S.store.reservations, state.calSel, lastDay);
 
   host.innerHTML = `<div class="daycard">
     <div class="daycard__head">
@@ -758,11 +880,15 @@ function renderDayCard(lastDay) {
     ${d.exps.length ? `<p class="form__sec">지출</p>
       <div class="exps" id="day-exps">${d.exps.map(expRow).join("")}</div>` : ""}
 
-    ${!d.slips.length && !d.exps.length ? `<p class="hint" style="margin-top:12px">이 날은 아무것도 없습니다.</p>` : ""}
+    ${d.resv.length ? `<p class="form__sec">예약</p>
+      <div class="exps" id="day-resv">${d.resv.map(resvRow).join("")}</div>` : ""}
+
+    ${!d.slips.length && !d.exps.length && !d.resv.length ? `<p class="hint" style="margin-top:12px">이 날은 아무것도 없습니다.</p>` : ""}
 
     <div class="daycard__acts">
       <button class="btn" id="day-add-slip" type="button">전표 추가</button>
       <button class="btn" id="day-add-exp" type="button">지출 추가</button>
+      <button class="btn" id="day-add-resv" type="button">예약 추가</button>
     </div>
   </div>`;
 
@@ -772,8 +898,12 @@ function renderDayCard(lastDay) {
   if ($("#day-exps")) $("#day-exps").onclick = e => {
     const b = e.target.closest(".exp"); if (b) expenseForm(S.store.expenses.find(x => x.id === b.dataset.id));
   };
+  if ($("#day-resv")) $("#day-resv").onclick = e => {
+    const b = e.target.closest(".exp"); if (b) reservationForm(S.store.reservations.find(x => x.id === b.dataset.id));
+  };
   $("#day-add-slip").onclick = () => caseForm(null, { date: d.iso });
   $("#day-add-exp").onclick = () => expenseForm(null, { date: d.iso });
+  $("#day-add-resv").onclick = () => reservationForm(null, { date: d.iso });
 }
 
 /* ── 세금 ── */
@@ -902,7 +1032,7 @@ function slipsSheet(rows, name = "매출전표") {
     widths: SLIP_WIDTHS,
     aoa: [
       SLIP_COLS,
-      ...rows.map(c => [c.date, c.company, c.dealer, c.phone, c.carModel, c.plate, c.workType, c.price, c.payMethod, c.unpaid, c.cost, c.note]),
+      ...rows.map(c => [c.date, c.company, c.dealer, c.phone, c.carModel, c.plate, (c.items || []).map(i => i.type).join(" + "), c.price, c.payMethod, c.unpaid, c.cost, c.note]),
       [],
       ["합계", `${rows.length}건`, "", "", "", "", "", t.price, "", t.unpaid, t.cost, ""],
       ["실제 들어온 돈", "", "", "", "", "", "", t.received, "", "", "", ""],
@@ -1035,6 +1165,7 @@ function openMenu() {
         ${rowText("계정", "", S.store.user?.email || "로그인 안 함")}
         ${rowText("전표", "", `${S.store.cases.length}건`)}
         ${rowText("지출", "", `${S.store.expenses.length}건`)}
+        ${rowText("예약", "", `${S.store.reservations.length}건`)}
       </div>
       <div class="form" style="margin-top:14px">
         <button class="btn btn--block" id="m-config" type="button">Supabase 연결 ${cfg.configured ? "다시 " : ""}설정</button>

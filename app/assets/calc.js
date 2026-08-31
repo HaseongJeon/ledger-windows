@@ -59,7 +59,7 @@ export function filterCases(cases, f) {
   return cases.filter(c => {
     if (f.from && c.date < f.from) return false;
     if (f.to && c.date > f.to) return false;
-    if (f.types?.length && !f.types.includes(c.workType)) return false;
+    if (f.types?.length && !f.types.some(t => (c.items || []).some(i => i.type === t))) return false;
     if (f.unpaidOnly && !(c.unpaid > 0)) return false;
     if (company && !norm(c.company).includes(company)) return false;
     if (dealer && !norm(c.dealer).includes(dealer)) return false;
@@ -102,8 +102,21 @@ export function groupBy(rows, keyFn) {
 
 export function byWorkType(cases) {
   return WORK_TYPES.map(t => {
-    const rows = cases.filter(c => c.workType === t);
-    return { key: t, color: WORK_COLOR[t], rows, ...totals(rows) };
+    const rows = [];
+    let price = 0, cost = 0, unpaid = 0;
+    for (const c of cases) {
+      const item = (c.items || []).find(i => i.type === t);
+      if (!item) continue;
+      rows.push(c);
+      const ip = item.price || 0, ic = item.cost || 0;
+      price += ip; cost += ic;
+      // 미수금은 항목별로 나뉘어 있지 않으니, 이 항목 금액이 전표 견적가에서 차지하는 비율만큼 비례 배분
+      const share = c.price > 0 ? ip / c.price : 0;
+      unpaid += (c.unpaid || 0) * share;
+    }
+    const received = price - unpaid;
+    const margin = price - cost;
+    return { key: t, color: WORK_COLOR[t], rows, count: rows.length, price, unpaid, received, cost, margin };
   });
 }
 
@@ -215,27 +228,28 @@ export function summarize(cases, expenses, opts = {}) {
    들어온 돈 = 그날 전표의 (견적가 − 미수금)
    나간 돈   = 그날 지출 (정기 지출은 그 달 해당일에 잡힘)
    ══════════════════════════════════════════════════════ */
-export function dayLedger(cases, expenses, iso, lastDayOfMonth) {
+export function dayLedger(cases, expenses, reservations, iso, lastDayOfMonth) {
   const slips = cases.filter(c => c.date === iso);
   const day = Number(iso.slice(8));
   const exps = expenses.filter(e => e.recurring
     // 정기 지출은 등록한 달부터 잡습니다 — 그 전 달 달력에 소급되지 않게
     ? Math.min(e.dayOfMonth || 1, lastDayOfMonth) === day && (!e.date || iso >= e.date)
     : e.date === iso);
+  const resv = reservations.filter(r => r.date === iso);
   const inAmt = slips.reduce((s, c) => s + (c.price - c.unpaid), 0);
   const outAmt = exps.reduce((s, e) => s + e.amount, 0);
   const billed = slips.reduce((s, c) => s + c.price, 0);
   const unpaid = slips.reduce((s, c) => s + c.unpaid, 0);
-  return { iso, slips, exps, in: inAmt, out: outAmt, billed, unpaid, net: inAmt - outAmt };
+  return { iso, slips, exps, resv, in: inAmt, out: outAmt, billed, unpaid, net: inAmt - outAmt };
 }
 
 /** 한 달 전체를 하루씩 */
-export function monthLedger(cases, expenses, year, month) {
+export function monthLedger(cases, expenses, reservations, year, month) {
   const last = new Date(year, month + 1, 0).getDate();
   const days = [];
   for (let d = 1; d <= last; d++) {
     const iso = new Date(year, month, d).toLocaleDateString("sv-SE");
-    days.push(dayLedger(cases, expenses, iso, last));
+    days.push(dayLedger(cases, expenses, reservations, iso, last));
   }
   const sum = days.reduce((a, d) => ({
     in: a.in + d.in, out: a.out + d.out, billed: a.billed + d.billed, unpaid: a.unpaid + d.unpaid

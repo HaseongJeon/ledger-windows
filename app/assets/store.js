@@ -4,6 +4,7 @@ const LS = {
   cfg:   "jpc.cfg",
   cases: "jpc.cases",
   exps:  "jpc.expenses",
+  resv:  "jpc.reservations",
   local: "jpc.localmode"
 };
 
@@ -13,6 +14,7 @@ export const store = {
   user: null,
   cases: [],
   expenses: [],
+  reservations: [],
   onChange: () => {},
   onRemoteInsert: () => {}   // (table, row) => void — 상대방이 새로 입력했을 때(알림용)
 };
@@ -92,17 +94,21 @@ export async function signOut() {
 /* ── 불러오기 ── */
 export async function loadAll() {
   if (store.mode === "cloud") {
-    const [c, e] = await Promise.all([
+    const [c, e, r] = await Promise.all([
       store.sb.from("cases").select("*").order("date", { ascending: false }),
-      store.sb.from("expenses").select("*").order("created_at", { ascending: false })
+      store.sb.from("expenses").select("*").order("created_at", { ascending: false }),
+      store.sb.from("reservations").select("*").order("date", { ascending: true })
     ]);
     if (c.error) throw c.error;
     if (e.error) throw e.error;
+    if (r.error) throw r.error;
     store.cases = c.data.map(fromRowCase);
     store.expenses = e.data.map(fromRowExp);
+    store.reservations = r.data.map(fromRowResv);
   } else {
     store.cases = readLS(LS.cases);
     store.expenses = readLS(LS.exps);
+    store.reservations = readLS(LS.resv);
     if (!store.cases.length && !store.expenses.length && localStorage.getItem("jpc.seeded") !== "1") {
       seed();
     }
@@ -115,22 +121,24 @@ function readLS(k) { try { return JSON.parse(localStorage.getItem(k) || "[]"); }
 function saveLS() {
   localStorage.setItem(LS.cases, JSON.stringify(store.cases));
   localStorage.setItem(LS.exps, JSON.stringify(store.expenses));
+  localStorage.setItem(LS.resv, JSON.stringify(store.reservations));
 }
 function sortAll() {
   store.cases.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.id > a.id ? 1 : -1));
   store.expenses.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  store.reservations.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
 }
 
 /* ── 행 <-> 객체 ── */
 const fromRowCase = r => ({
   id: r.id, date: r.date, company: r.company, dealer: r.dealer, phone: r.phone,
-  carModel: r.car_model, plate: r.plate, workType: r.work_type,
+  carModel: r.car_model, plate: r.plate, items: r.items || [],
   price: Number(r.price) || 0, payMethod: r.pay_method,
   unpaid: Number(r.unpaid) || 0, cost: Number(r.cost) || 0, note: r.note || ""
 });
 const toRowCase = c => ({
   date: c.date, company: c.company, dealer: c.dealer, phone: c.phone,
-  car_model: c.carModel, plate: c.plate, work_type: c.workType,
+  car_model: c.carModel, plate: c.plate, items: c.items,
   price: c.price, pay_method: c.payMethod, unpaid: c.unpaid, cost: c.cost, note: c.note
 });
 const fromRowExp = r => ({
@@ -141,6 +149,14 @@ const toRowExp = e => ({
   amount: e.amount, category: e.category, recurring: e.recurring,
   day_of_month: e.recurring ? e.dayOfMonth : null,
   date: e.date, note: e.note
+});
+const fromRowResv = r => ({
+  id: r.id, date: r.date, company: r.company, dealer: r.dealer, phone: r.phone,
+  carModel: r.car_model, plate: r.plate, types: r.types || [], note: r.note || ""
+});
+const toRowResv = r => ({
+  date: r.date, company: r.company, dealer: r.dealer, phone: r.phone,
+  car_model: r.carModel, plate: r.plate, types: r.types, note: r.note
 });
 
 /* ── 쓰기 ── */
@@ -199,6 +215,32 @@ export async function deleteExpense(id) {
   store.onChange();
 }
 
+export async function saveReservation(r) {
+  if (store.mode === "cloud") {
+    const row = toRowResv(r);
+    const q = r.id ? store.sb.from("reservations").update(row).eq("id", r.id).select()
+                   : store.sb.from("reservations").insert(row).select();
+    const { data, error } = await q;
+    if (error) throw error;
+    upsert(store.reservations, fromRowResv(data[0]));
+  } else {
+    if (!r.id) r.id = uid();
+    upsert(store.reservations, { ...r });
+    saveLS();
+  }
+  sortAll(); store.onChange();
+}
+
+export async function deleteReservation(id) {
+  if (store.mode === "cloud") {
+    const { error } = await store.sb.from("reservations").delete().eq("id", id);
+    if (error) throw error;
+  }
+  store.reservations = store.reservations.filter(x => x.id !== id);
+  if (store.mode === "local") saveLS();
+  store.onChange();
+}
+
 function upsert(arr, item) {
   const i = arr.findIndex(x => x.id === item.id);
   if (i >= 0) arr[i] = item; else arr.unshift(item);
@@ -214,6 +256,7 @@ export function watch() {
   store.sb.channel("jpc-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "cases" }, onEvent("cases"))
     .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, onEvent("expenses"))
+    .on("postgres_changes", { event: "*", schema: "public", table: "reservations" }, onEvent("reservations"))
     .subscribe();
 }
 let pending = null;
@@ -230,14 +273,14 @@ function seed() {
     return x.toLocaleDateString("sv-SE");
   };
   store.cases = [
-    { id: uid(), date: d(1),  company: "대성모터스", dealer: "김성호", phone: "010-2231-8842", carModel: "그랜저 IG",   plate: "12가 3456", workType: "선팅", price: 450000,  payMethod: "카드",       unpaid: 0,      cost: 180000, note: "전면 15% 측후면 5%" },
-    { id: uid(), date: d(2),  company: "대성모터스", dealer: "김성호", phone: "010-2231-8842", carModel: "카니발 KA4",  plate: "31버 7719", workType: "전장", price: 780000,  payMethod: "세금계산서", unpaid: 380000, cost: 310000, note: "블박+하이패스" },
-    { id: uid(), date: d(4),  company: "한빛오토",   dealer: "박지훈", phone: "010-4410-2093", carModel: "쏘렌토 MQ4",  plate: "88도 1204", workType: "덴트", price: 320000,  payMethod: "현금",       unpaid: 0,      cost: 90000,  note: "" },
-    { id: uid(), date: d(6),  company: "한빛오토",   dealer: "이가람", phone: "010-7788-1120", carModel: "아이오닉 5",  plate: "204허 5561", workType: "선팅", price: 620000,  payMethod: "카드",       unpaid: 0,      cost: 240000, note: "열차단 프리미엄" },
-    { id: uid(), date: d(9),  company: "정우상사",   dealer: "최민석", phone: "010-3320-7745", carModel: "G80",         plate: "77무 9083", workType: "전장", price: 1150000, payMethod: "세금계산서", unpaid: 0,      cost: 470000, note: "순정 매립" },
-    { id: uid(), date: d(12), company: "정우상사",   dealer: "최민석", phone: "010-3320-7745", carModel: "투싼 NX4",    plate: "45조 3312", workType: "덴트", price: 280000,  payMethod: "현금",       unpaid: 80000,  cost: 60000,  note: "뒷휀더 2군데" },
-    { id: uid(), date: d(15), company: "삼일카서비스", dealer: "정유진", phone: "010-9902-4417", carModel: "레이 EV",    plate: "19바 2274", workType: "선팅", price: 380000,  payMethod: "카드",       unpaid: 0,      cost: 150000, note: "" },
-    { id: uid(), date: d(20), company: "대성모터스", dealer: "김성호", phone: "010-2231-8842", carModel: "스타리아",    plate: "63우 8890", workType: "전장", price: 940000,  payMethod: "세금계산서", unpaid: 0,      cost: 380000, note: "" }
+    { id: uid(), date: d(1),  company: "대성모터스", dealer: "김성호", phone: "010-2231-8842", carModel: "그랜저 IG",   plate: "12가 3456", items: [{ type: "선팅", price: 450000, cost: 180000 }], price: 450000,  payMethod: "카드",       unpaid: 0,      cost: 180000, note: "전면 15% 측후면 5%" },
+    { id: uid(), date: d(2),  company: "대성모터스", dealer: "김성호", phone: "010-2231-8842", carModel: "카니발 KA4",  plate: "31버 7719", items: [{ type: "전장", price: 780000, cost: 310000 }], price: 780000,  payMethod: "세금계산서", unpaid: 380000, cost: 310000, note: "블박+하이패스" },
+    { id: uid(), date: d(4),  company: "한빛오토",   dealer: "박지훈", phone: "010-4410-2093", carModel: "쏘렌토 MQ4",  plate: "88도 1204", items: [{ type: "덴트", price: 320000, cost: 90000 }],  price: 320000,  payMethod: "현금",       unpaid: 0,      cost: 90000,  note: "" },
+    { id: uid(), date: d(6),  company: "한빛오토",   dealer: "이가람", phone: "010-7788-1120", carModel: "아이오닉 5",  plate: "204허 5561", items: [{ type: "선팅", price: 620000, cost: 240000 }], price: 620000,  payMethod: "카드",       unpaid: 0,      cost: 240000, note: "열차단 프리미엄" },
+    { id: uid(), date: d(9),  company: "정우상사",   dealer: "최민석", phone: "010-3320-7745", carModel: "G80",         plate: "77무 9083", items: [{ type: "전장", price: 1000000, cost: 400000 }, { type: "선팅", price: 150000, cost: 70000 }], price: 1150000, payMethod: "세금계산서", unpaid: 0,      cost: 470000, note: "순정 매립 + 선팅" },
+    { id: uid(), date: d(12), company: "정우상사",   dealer: "최민석", phone: "010-3320-7745", carModel: "투싼 NX4",    plate: "45조 3312", items: [{ type: "덴트", price: 280000, cost: 60000 }],  price: 280000,  payMethod: "현금",       unpaid: 80000,  cost: 60000,  note: "뒷휀더 2군데" },
+    { id: uid(), date: d(15), company: "삼일카서비스", dealer: "정유진", phone: "010-9902-4417", carModel: "레이 EV",    plate: "19바 2274", items: [{ type: "선팅", price: 380000, cost: 150000 }], price: 380000,  payMethod: "카드",       unpaid: 0,      cost: 150000, note: "" },
+    { id: uid(), date: d(20), company: "대성모터스", dealer: "김성호", phone: "010-2231-8842", carModel: "스타리아",    plate: "63우 8890", items: [{ type: "전장", price: 940000, cost: 380000 }], price: 940000,  payMethod: "세금계산서", unpaid: 0,      cost: 380000, note: "" }
   ];
   const day = n => new Date(today.getFullYear(), today.getMonth(), n).toLocaleDateString("sv-SE");
   store.expenses = [
@@ -249,6 +292,11 @@ function seed() {
     { id: uid(), amount: 152000,  category: "소모품비",   recurring: false, dayOfMonth: null, date: d(11), note: "필름 자재" },
     { id: uid(), amount: 96000,   category: "차량유지비", recurring: false, dayOfMonth: null, date: d(3),  note: "주유" },
     { id: uid(), amount: 143000,  category: "접대비",     recurring: false, dayOfMonth: null, date: d(14), note: "거래처 미팅" }
+  ];
+  const future = n => { const x = new Date(today); x.setDate(x.getDate() + n); return x.toLocaleDateString("sv-SE"); };
+  store.reservations = [
+    { id: uid(), date: future(3), company: "한빛오토", dealer: "박지훈", phone: "010-4410-2093", carModel: "스포티지 NQ5", plate: "", types: ["선팅"], note: "다음 주 입고 예정" },
+    { id: uid(), date: future(9), company: "정우상사", dealer: "최민석", phone: "010-3320-7745", carModel: "", plate: "", types: ["전장", "덴트"], note: "" }
   ];
   localStorage.setItem("jpc.seeded", "1");
   saveLS();
