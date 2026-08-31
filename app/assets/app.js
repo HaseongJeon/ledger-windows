@@ -2,6 +2,7 @@ import * as S from "./store.js";
 import * as C from "./calc.js";
 import { donut, legend, miniBar, esc } from "./charts.js";
 import { exportSheets } from "./xlsx.js";
+import { initPush } from "./push.js";
 
 const $  = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -55,6 +56,7 @@ async function enterApp() {
   try {
     await S.loadAll();
     S.watch();
+    initPush();
   } catch (err) {
     toast("불러오기 실패: " + (err.message || err));
   }

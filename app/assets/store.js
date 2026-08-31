@@ -13,7 +13,8 @@ export const store = {
   user: null,
   cases: [],
   expenses: [],
-  onChange: () => {}
+  onChange: () => {},
+  onRemoteInsert: () => {}   // (table, row) => void — 상대방이 새로 입력했을 때(알림용)
 };
 
 /* ── 설정 ── */
@@ -26,7 +27,7 @@ function normUrl(u) {
 export function readConfig() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(LS.cfg) || "null"); } catch { /* 무시 */ }
-  const base = window.APP_CONFIG || {};
+  const base = globalThis.APP_CONFIG || {};
   const url = normUrl(saved?.url || base.SUPABASE_URL);
   const key = (saved?.key || base.SUPABASE_ANON_KEY || "").trim();
   return { url, key, configured: !!(url && key) };
@@ -35,6 +36,23 @@ export function writeConfig(url, key) {
   localStorage.setItem(LS.cfg, JSON.stringify({ url: normUrl(url), key: key.trim() }));
 }
 export function clearConfig() { localStorage.removeItem(LS.cfg); }
+
+/* 알림(FCM)용 Firebase 설정 — 비어 있으면 알림 기능만 꺼짐 */
+export function readFirebaseConfig() {
+  const f = globalThis.APP_CONFIG?.FIREBASE || {};
+  const configured = !!(f.apiKey && f.projectId && f.appId && f.messagingSenderId && f.vapidKey);
+  return { ...f, configured };
+}
+
+/* 기기마다 하나씩, 로그인 계정이 바뀌어도 유지되는 식별자 (푸시 토큰 upsert 키) */
+export function deviceId() {
+  let id = localStorage.getItem("jpc.deviceId");
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : "dev" + Date.now() + Math.random().toString(36).slice(2);
+    localStorage.setItem("jpc.deviceId", id);
+  }
+  return id;
+}
 
 export function isLocalPinned() { return localStorage.getItem(LS.local) === "1"; }
 export function pinLocal(v) { v ? localStorage.setItem(LS.local, "1") : localStorage.removeItem(LS.local); }
@@ -63,6 +81,10 @@ export async function currentSession() {
   return data?.session || null;
 }
 export async function signOut() {
+  if (store.sb && store.user) {
+    // 이 기기의 푸시 토큰은 계정이 바뀌면 의미가 없으니 best-effort로 지움
+    await store.sb.from("push_tokens").delete().eq("user_id", store.user.id).eq("device_id", deviceId()).then(null, () => {});
+  }
   if (store.sb) await store.sb.auth.signOut();
   store.user = null; store.mode = "local";
 }
@@ -185,9 +207,13 @@ function upsert(arr, item) {
 /* ── 실시간 동기화: 상대방이 입력하면 바로 반영 ── */
 export function watch() {
   if (store.mode !== "cloud" || !store.sb) return;
+  const onEvent = table => payload => {
+    if (payload.eventType === "INSERT") store.onRemoteInsert(table, payload.new);
+    refresh();
+  };
   store.sb.channel("jpc-live")
-    .on("postgres_changes", { event: "*", schema: "public", table: "cases" }, () => refresh())
-    .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => refresh())
+    .on("postgres_changes", { event: "*", schema: "public", table: "cases" }, onEvent("cases"))
+    .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, onEvent("expenses"))
     .subscribe();
 }
 let pending = null;
