@@ -304,6 +304,9 @@ button{ cursor:pointer; }
 .pie__seg.is-active{ transform: translate(var(--pop-x), var(--pop-y)); filter: drop-shadow(0 3px 6px rgba(15,20,23,.35)); }
 .pie__seg.is-dim{ opacity:.35; }
 .pie__label{ font: 700 12.5px var(--f-ui); pointer-events:none; transition: opacity .3s ease; }
+.pie__tip{ transition: opacity .15s ease; }
+.pie__tip-bg{ fill: var(--ink); }
+.pie__tip-t{ font: 600 12px var(--f-ui); fill: #fff; }
 .pie__empty{ font-size:12px; color: var(--ink-4); padding: 40px 0; }
 
 .legend{ display:flex; flex-direction:column; gap:2px; }

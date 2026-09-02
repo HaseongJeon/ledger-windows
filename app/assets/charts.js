@@ -5,10 +5,11 @@ import { won, shortWon, pct } from "./calc.js";
 
 const R = 92, CX = 110, CY = 110;   // 파이 반지름 · 중심
 const START = -Math.PI / 2;         // 12시 방향에서 시작해 시계 방향으로
-const GAP_RAD = 0.022;              // 조각 사이 여백(라디안, 한쪽당)
+const GAP_RAD = 0;                  // 조각 사이 여백(라디안, 한쪽당) — 흰 틈 없이 맞닿게
 const MIN_SWEEP = 0.02;             // 값이 아주 작아도 유지하는 최소 조각 각도
 const LABEL_MIN_SWEEP = 0.7;        // 이 각도(약 40°) 이상인 조각에만 비율을 안에 적는다
 const LABEL_R = R * 0.62;           // 안쪽 라벨 위치 반지름
+const TIP_R = R + 16;               // 탭했을 때 이름표를 띄우는 반지름(조각 바깥)
 const POP = 9;                      // 선택 시 바깥으로 밀려나는 거리(px)
 const ENTER_MS = 900;               // 파이 전체가 시계방향으로 한 번에 그려지는 시간
 
@@ -74,7 +75,12 @@ export function donut(slices, opts = {}) {
   }).join("");
 
   const label = opts.centerLabel || "합계";
-  return `<svg class="pie__svg" viewBox="0 0 220 220" role="img" aria-label="${esc(label)} ${won(total)}원" data-total="${total}" data-label="${esc(label)}">${segs}</svg>`;
+  return `<svg class="pie__svg" viewBox="0 0 220 220" role="img" aria-label="${esc(label)} ${won(total)}원" data-total="${total}" data-label="${esc(label)}">${segs}
+    <g class="pie__tip" data-tip style="opacity:0" pointer-events="none">
+      <rect class="pie__tip-bg" data-tip-bg rx="4" ry="4"></rect>
+      <text class="pie__tip-t" data-tip-t text-anchor="middle" dominant-baseline="middle"></text>
+    </g>
+  </svg>`;
 }
 
 export function legend(slices) {
@@ -110,6 +116,33 @@ export function mountPie(pieEl, legendEl) {
   if (legendEl) legendEl.classList.add("legend--linked");
   if (statK) statK.textContent = defaultLabel;
   if (statV) statV.textContent = shortWon(total);
+
+  const tip = svg.querySelector("[data-tip]");
+  const tipBg = svg.querySelector("[data-tip-bg]");
+  const tipText = svg.querySelector("[data-tip-t]");
+
+  function showTip(index) {
+    if (!tip) return;
+    const path = segs[index]?.querySelector(".pie__wedge");
+    if (!path) return;
+    const a0 = Number(path.dataset.a0), a1 = Number(path.dataset.a1);
+    const mid = (a0 + a1) / 2;
+    const x = CX + TIP_R * Math.cos(mid), y = CY + TIP_R * Math.sin(mid);
+    tipText.textContent = segs[index].dataset.key;
+    tipText.setAttribute("x", x);
+    tipText.setAttribute("y", y);
+    const box = tipText.getBBox();
+    const padX = 8, padY = 5;
+    tipBg.setAttribute("x", box.x - padX);
+    tipBg.setAttribute("y", box.y - padY);
+    tipBg.setAttribute("width", box.width + padX * 2);
+    tipBg.setAttribute("height", box.height + padY * 2);
+    tip.style.opacity = "1";
+  }
+
+  function hideTip() {
+    if (tip) tip.style.opacity = "0";
+  }
 
   // 등장 애니메이션: 12시부터 시계방향으로 한 번에 쓸어 그린다.
   // CSS로 두 path 문자열 사이를 전환하면 좌표를 직선으로 잇는 식이라 큰 조각일수록 부채꼴이
@@ -172,6 +205,7 @@ export function mountPie(pieEl, legendEl) {
     const label = index === null ? defaultLabel : segs[index]?.dataset.key || defaultLabel;
     if (statK) swapLabel(statK, label);
     if (statV) animateValue(statV, prevValue, target, 300);
+    if (index === null) hideTip(); else showTip(index);
   }
 
   segs.forEach((g, i) => {
