@@ -462,9 +462,9 @@ function caseForm(existing, defaults = {}) {
   function renderPhoneField() {
     $("#c-phone-field").innerHTML = editing
       ? `<span class="field__label">연락처</span><input id="c-phone" type="tel" inputmode="tel" value="${esc(c.phone)}" placeholder="010-0000-0000">`
-      : `<span class="field__label">연락처</span>${c.phone
+      : `<span class="field__label">연락처</span><div class="field__ro${c.phone ? "" : " field__ro--muted"}">${c.phone
           ? `<a class="tel-link" href="tel:${esc(c.phone)}">${esc(c.phone)}</a>`
-          : `<span class="hint" style="display:inline;margin:0">번호 없음</span>`}`;
+          : "번호 없음"}</div>`;
   }
 
   function applyEditingState() {
