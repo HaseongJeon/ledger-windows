@@ -1,6 +1,6 @@
 import * as S from "./store.js";
 import * as C from "./calc.js";
-import { donut, legend, miniBar, esc } from "./charts.js";
+import { donut, legend, miniBar, mountPie, esc } from "./charts.js";
 import { exportSheets } from "./xlsx.js";
 import { initPush } from "./push.js";
 
@@ -858,6 +858,7 @@ function renderExpenseChart() {
 
   $("#exp-pie").innerHTML = donut(slices, { centerLabel: "지출+세금" });
   $("#exp-legend").innerHTML = legend(slices);
+  mountPie($("#exp-pie"), $("#exp-legend"));
 }
 
 /* ═══════════════ 4. 달력 ═══════════════ */
@@ -1094,6 +1095,7 @@ function renderRevenue() {
 
   $("#rev-pie").innerHTML = donut(slices, { centerLabel: "매출" });
   $("#rev-legend").innerHTML = legend(slices);
+  mountPie($("#rev-pie"), $("#rev-legend"));
   $("#rev-breakdown").innerHTML = `<div class="card" style="margin-top:12px">
     <h3 class="card__h">작업 종류별 상세</h3>
     <div class="rows">
