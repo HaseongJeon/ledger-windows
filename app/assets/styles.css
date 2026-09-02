@@ -19,6 +19,7 @@
  --amber-lo: #F7EBD3;
  --rose: #A8323F;
  --rose-lo: #F6E4E5;
+ --tel: #1A56DB;
 
  --copper: #B65420;
  --smoke: #35577F;
@@ -74,6 +75,8 @@ button{ cursor:pointer; }
 .auth__form{ display:grid; gap:12px; }
 .auth__msg{ margin:2px 0 0; font-size:12.5px; color: var(--rose); min-height:1em; line-height:1.5; }
 .auth__msg--info{ color: var(--ink-3); }
+.auth__row{ display:flex; gap:8px; }
+.auth__row .btn{ flex:1; }
 .auth__alt{ display:flex; flex-direction:column; gap:8px; margin-top:20px; padding-top:16px; border-top:1px dashed var(--line); }
 
 .linkbtn{ background:none; border:0; padding:2px 0; text-align:left; font-size:12.5px; color: var(--ink-3); text-decoration: underline; text-underline-offset:3px; }
@@ -94,6 +97,15 @@ button{ cursor:pointer; }
 .field input:focus, .field select:focus, .field textarea:focus{ outline:none; border-color: var(--plate); box-shadow: inset 0 0 0 1px var(--plate); }
 .field--mini .field__label{ font-size:9.5px; }
 .field--money input{ font-weight:600; text-align:right; font-size:17px; letter-spacing:-.02em; }
+.field input:disabled, .field select:disabled, .field textarea:disabled{ opacity:.55; background: var(--sheet-2); cursor:not-allowed; }
+
+/* 전화번호 하이퍼링크 (표 보기 셀, 카드 상세의 보기 상태) */
+.tel-link{ color: var(--tel); text-decoration: underline; font-weight:600; }
+.tel-link:hover{ opacity:.8; }
+
+/* 카드 상세를 "수정" 누르기 전까지 값을 못 바꾸게 잠근 상태 */
+.is-locked .chip, .is-locked .seg__b{ pointer-events:none; opacity:.6; }
+
 
 /* ─────────── 버튼 ─────────── */
 .btn{ border:1px solid var(--ink); background: var(--sheet); border-radius: 3px; padding:10px 16px; font-weight:600; font-size:14px; }
@@ -103,6 +115,7 @@ button{ cursor:pointer; }
 .btn--plate:hover{ background:#0a4E35; }
 .btn--danger{ background: var(--sheet); border-color: var(--rose); color: var(--rose); }
 .btn--block{ width:100%; }
+.btn:disabled{ opacity:.4; cursor:not-allowed; }
 .ghost{ background:transparent; border:1px solid var(--line); border-radius: 3px; padding:6px 11px; font-size:12.5px; font-weight:500; color: var(--ink-2); }
 .ghost:hover{ border-color: var(--ink-3); background: var(--sheet); }
 .ghost.is-on{ background: var(--ink); border-color: var(--ink); color:#fff; }
@@ -396,6 +409,7 @@ button{ cursor:pointer; }
 .modal__foot{ display:flex; gap:8px; padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background: var(--sheet); }
 .modal__foot .btn{ flex:1; }
 .modal__foot .btn--icononly{ flex:0 0 auto; }
+.modal__foot .btn--sm{ flex:0 0 auto; }
 
 .form{ display:grid; gap:13px; }
 .form__2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }

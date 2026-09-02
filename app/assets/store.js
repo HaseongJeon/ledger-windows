@@ -16,7 +16,7 @@ export const store = {
   expenses: [],
   reservations: [],
   onChange: () => {},
-  onRemoteInsert: () => {}   // (table, row) => void — 상대방이 새로 입력했을 때(알림용)
+  onRemoteInsert: () => {}   // (table, row) => void — 내 다른 기기에서 새로 입력됐을 때(알림용)
 };
 
 /* ── 설정 ── */
@@ -59,6 +59,71 @@ export function deviceId() {
 export function isLocalPinned() { return localStorage.getItem(LS.local) === "1"; }
 export function pinLocal(v) { v ? localStorage.setItem(LS.local, "1") : localStorage.removeItem(LS.local); }
 
+/* ── 로컬 계정: Supabase Auth 를 거치지 않고 이 기기 안에서만 가입/로그인.
+   계정마다 localStorage 키를 따로 써서 서로 다른 계정은 서로 다른 데이터를 봅니다. ── */
+const LS_ACCOUNTS = "jpc.accounts";      // [{id, email, salt, hash}]
+const LS_ACTIVE    = "jpc.activeAccount"; // 현재 로그인한 로컬 계정 id
+
+function readAccounts() { try { return JSON.parse(localStorage.getItem(LS_ACCOUNTS) || "[]"); } catch { return []; } }
+function saveAccounts(list) { localStorage.setItem(LS_ACCOUNTS, JSON.stringify(list)); }
+
+async function hashPassword(password, salt) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt + ":" + password));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function activateLocalAccount(id, email) {
+  localStorage.setItem(LS_ACTIVE, id);
+  store.user = { id, email, local: true };
+  store.mode = "local";
+}
+
+export async function signUpLocal(email, password) {
+  email = (email || "").trim().toLowerCase();
+  if (!email || !password) throw new Error("이메일과 비밀번호를 입력하세요.");
+  if (password.length < 4) throw new Error("비밀번호는 4자 이상으로 입력하세요.");
+  const accounts = readAccounts();
+  if (accounts.some(a => a.email === email)) throw new Error("이미 있는 계정입니다. 로그인해 주세요.");
+  const id = crypto.randomUUID ? crypto.randomUUID() : "acc" + Date.now() + Math.random().toString(36).slice(2);
+  const salt = crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
+  accounts.push({ id, email, salt, hash: await hashPassword(password, salt) });
+  saveAccounts(accounts);
+  activateLocalAccount(id, email);
+  return store.user;
+}
+
+/* 이메일이 로컬 계정 목록에 없으면 null(=클라우드 로그인을 계속 시도해도 됨),
+   있는데 비밀번호가 틀리면 예외를 던짐 */
+export async function signInLocal(email, password) {
+  email = (email || "").trim().toLowerCase();
+  const acc = readAccounts().find(a => a.email === email);
+  if (!acc) return null;
+  if (await hashPassword(password, acc.salt) !== acc.hash) throw new Error("비밀번호가 맞지 않습니다.");
+  activateLocalAccount(acc.id, acc.email);
+  return store.user;
+}
+
+/* 새로고침 후에도 로컬 계정 로그인 상태를 이어감 */
+export function restoreLocalSession() {
+  const id = localStorage.getItem(LS_ACTIVE);
+  if (!id) { store.user = null; return null; }
+  const acc = readAccounts().find(a => a.id === id);
+  if (!acc) { localStorage.removeItem(LS_ACTIVE); store.user = null; return null; }
+  store.user = { id: acc.id, email: acc.email, local: true };
+  return store.user;
+}
+
+export function signOutLocalAccount() {
+  localStorage.removeItem(LS_ACTIVE);
+  store.user = null;
+}
+
+/* 계정별로 나뉘는 localStorage 키 (로그인한 로컬 계정이 없으면 공용 키 그대로 사용) */
+function scopedKey(base) {
+  const id = localStorage.getItem(LS_ACTIVE);
+  return id ? `${base}.${id}` : base;
+}
+
 /* ── Supabase 클라이언트 ── */
 export async function connect() {
   const { url, key, configured } = readConfig();
@@ -75,6 +140,24 @@ export async function signIn(email, password) {
   store.user = data.user;
   store.mode = "cloud";
   return data.user;
+}
+
+/* 회원가입: Supabase Auth 에 계정을 직접 만듭니다(대시보드에서 손으로 추가할 필요 없음).
+   계정마다 데이터가 완전히 분리되므로(schema.sql 의 RLS 참고) 새로 가입해도 다른 사람 자료는 못 봅니다.
+   "Confirm email" 설정이 꺼져 있으면 가입과 동시에 세션이 생겨 바로 로그인됩니다. */
+export async function signUpCloud(email, password) {
+  // 이메일이 비어 있으면 Supabase 서버가 "익명 가입" 요청으로 오인해서 이해하기 어려운
+  // 영문 에러("Anonymous sign-ins are disabled")를 돌려줌 — 그 전에 여기서 막음
+  if (!email || !password) throw new Error("이메일과 비밀번호를 입력하세요.");
+  if (!store.sb) await connect();
+  const { data, error } = await store.sb.auth.signUp({ email, password });
+  if (error) throw error;
+  // 이미 가입(인증 완료)된 이메일이면 Supabase 는 에러 없이 identities 를 빈 배열로 돌려줌
+  if (data.user && data.user.identities && data.user.identities.length === 0) {
+    throw new Error("이미 가입된 이메일입니다. 로그인해 주세요.");
+  }
+  if (data.session) { store.user = data.user; store.mode = "cloud"; }
+  return data;
 }
 export async function currentSession() {
   if (!store.sb) await connect();
@@ -106,10 +189,10 @@ export async function loadAll() {
     store.expenses = e.data.map(fromRowExp);
     store.reservations = r.data.map(fromRowResv);
   } else {
-    store.cases = readLS(LS.cases);
-    store.expenses = readLS(LS.exps);
-    store.reservations = readLS(LS.resv);
-    if (!store.cases.length && !store.expenses.length && localStorage.getItem("jpc.seeded") !== "1") {
+    store.cases = readLS(scopedKey(LS.cases));
+    store.expenses = readLS(scopedKey(LS.exps));
+    store.reservations = readLS(scopedKey(LS.resv));
+    if (!store.cases.length && !store.expenses.length && localStorage.getItem(scopedKey("jpc.seeded")) !== "1") {
       seed();
     }
   }
@@ -119,9 +202,9 @@ export async function loadAll() {
 
 function readLS(k) { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch { return []; } }
 function saveLS() {
-  localStorage.setItem(LS.cases, JSON.stringify(store.cases));
-  localStorage.setItem(LS.exps, JSON.stringify(store.expenses));
-  localStorage.setItem(LS.resv, JSON.stringify(store.reservations));
+  localStorage.setItem(scopedKey(LS.cases), JSON.stringify(store.cases));
+  localStorage.setItem(scopedKey(LS.exps), JSON.stringify(store.expenses));
+  localStorage.setItem(scopedKey(LS.resv), JSON.stringify(store.reservations));
 }
 function sortAll() {
   store.cases.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.id > a.id ? 1 : -1));
@@ -246,7 +329,7 @@ function upsert(arr, item) {
   if (i >= 0) arr[i] = item; else arr.unshift(item);
 }
 
-/* ── 실시간 동기화: 상대방이 입력하면 바로 반영 ── */
+/* ── 실시간 동기화: 내 다른 기기에서 입력하면 바로 반영 ── */
 export function watch() {
   if (store.mode !== "cloud" || !store.sb) return;
   const onEvent = table => payload => {
@@ -298,6 +381,14 @@ function seed() {
     { id: uid(), date: future(3), company: "한빛오토", dealer: "박지훈", phone: "010-4410-2093", carModel: "스포티지 NQ5", plate: "", types: ["선팅"], note: "다음 주 입고 예정" },
     { id: uid(), date: future(9), company: "정우상사", dealer: "최민석", phone: "010-3320-7745", carModel: "", plate: "", types: ["전장", "덴트"], note: "" }
   ];
-  localStorage.setItem("jpc.seeded", "1");
+  localStorage.setItem(scopedKey("jpc.seeded"), "1");
   saveLS();
+}
+
+/* 현재 로그인한 계정(또는 공용 로컬 모드) 범위의 저장 데이터를 지움 */
+export function wipeLocalData() {
+  localStorage.removeItem(scopedKey(LS.cases));
+  localStorage.removeItem(scopedKey(LS.exps));
+  localStorage.removeItem(scopedKey(LS.resv));
+  localStorage.removeItem(scopedKey("jpc.seeded"));
 }

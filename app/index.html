@@ -20,7 +20,7 @@
   <div class="auth__slip">
     <p class="auth__eyebrow">전표철</p>
     <h1 class="auth__title">매출·지출<br>관리 장부</h1>
-    <p class="auth__sub">전장 · 선팅 · 덴트 시공 전표를 두 사람이 같이 씁니다.</p>
+    <p class="auth__sub">전장 · 선팅 · 덴트 시공 전표를 계정별로 관리합니다.</p>
 
     <form id="auth-form" class="auth__form" autocomplete="on">
       <label class="field">
@@ -32,12 +32,45 @@
         <input id="auth-pass" type="password" autocomplete="current-password" required placeholder="••••••••">
       </label>
       <p id="auth-msg" class="auth__msg" role="status" aria-live="polite"></p>
-      <button id="auth-submit" class="btn btn--plate btn--block" type="submit">로그인</button>
+      <div class="auth__row">
+        <button id="auth-submit" class="btn btn--plate" type="submit">로그인</button>
+        <button id="auth-signup" class="btn" type="button">회원가입</button>
+      </div>
     </form>
 
     <div class="auth__alt">
       <button id="auth-local" class="linkbtn" type="button">서버 없이 이 기기에서만 쓰기</button>
       <button id="auth-config" class="linkbtn" type="button">Supabase 연결 설정</button>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 회원가입 ══════════ -->
+<section id="view-signup" class="auth" hidden>
+  <div class="auth__slip">
+    <p class="auth__eyebrow">전표철</p>
+    <h1 class="auth__title">회원가입</h1>
+    <p class="auth__sub">계정마다 데이터가 완전히 분리됩니다.</p>
+
+    <form id="signup-form" class="auth__form" autocomplete="on">
+      <label class="field">
+        <span class="field__label">이메일</span>
+        <input id="signup-email" type="email" inputmode="email" autocomplete="username" required placeholder="you@example.com">
+      </label>
+      <label class="field">
+        <span class="field__label">비밀번호</span>
+        <input id="signup-pass" type="password" autocomplete="new-password" required placeholder="••••••••">
+      </label>
+      <label class="field">
+        <span class="field__label">비밀번호 확인</span>
+        <input id="signup-pass2" type="password" autocomplete="new-password" required placeholder="••••••••">
+      </label>
+      <p id="signup-msg" class="auth__msg" role="status" aria-live="polite"></p>
+      <button id="signup-submit" class="btn btn--plate btn--block" type="submit">가입하기</button>
+    </form>
+
+    <div class="auth__alt">
+      <button id="signup-back" class="linkbtn" type="button">로그인으로 돌아가기</button>
     </div>
   </div>
 </section>
