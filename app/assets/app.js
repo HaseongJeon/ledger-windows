@@ -1314,6 +1314,7 @@ function openMenu() {
         ${rowText("예약", "", `${S.store.reservations.length}건`)}
       </div>
       <div class="form" style="margin-top:14px">
+        ${window.electronAPI?.isElectron ? `<button class="btn btn--block" id="m-update" type="button">소프트웨어 업데이트</button>` : ""}
         <button class="btn btn--block" id="m-config" type="button">Supabase 연결 ${cfg.configured ? "다시 " : ""}설정</button>
         ${S.store.mode === "cloud" || S.store.user
           ? `<button class="btn btn--block" id="m-out" type="button">로그아웃</button>`
@@ -1323,6 +1324,37 @@ function openMenu() {
       <p class="hint">로컬 모드에서 넣은 자료는 이 기기에만 있습니다. 여러 기기에서 이어 쓰려면 Supabase 로 연결하세요.</p>`,
     foot: `<button class="btn" data-close type="button">닫기</button>`
   });
+  if ($("#m-update")) $("#m-update").onclick = async () => {
+    const btn = $("#m-update");
+    btn.disabled = true;
+    btn.textContent = "확인 중…";
+    try {
+      const res = await window.electronAPI.checkForSoftwareUpdate();
+      if (res.status === "up-to-date") {
+        toast("이미 최신 버전입니다 (v" + res.version + ")");
+        btn.disabled = false;
+        btn.textContent = "소프트웨어 업데이트";
+      } else if (res.status === "update-available") {
+        btn.textContent = `v${res.version} 다운로드 중…`;
+        const res2 = await window.electronAPI.downloadAndInstallUpdate();
+        if (res2.status === "launched") {
+          toast("설치 프로그램을 실행합니다. 안내에 따라 진행해 주세요.");
+        } else {
+          toast("업데이트 실패: " + res2.message);
+          btn.disabled = false;
+          btn.textContent = "소프트웨어 업데이트";
+        }
+      } else {
+        toast("업데이트 확인 실패: " + res.message);
+        btn.disabled = false;
+        btn.textContent = "소프트웨어 업데이트";
+      }
+    } catch (err) {
+      toast("업데이트 확인 실패: " + err.message);
+      btn.disabled = false;
+      btn.textContent = "소프트웨어 업데이트";
+    }
+  };
   $("#m-config").onclick = () => openConfig();
   if ($("#m-out")) $("#m-out").onclick = async () => {
     if (S.store.mode === "cloud") await S.signOut();
