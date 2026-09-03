@@ -84,7 +84,9 @@
     <div class="rail__meta">
       <span id="mode-badge" class="badge">로컬</span>
       <span id="who" class="rail__who"></span>
-      <button id="btn-menu" class="iconbtn" type="button" aria-label="설정 메뉴">⋯</button>
+      <button id="btn-menu" class="iconbtn" type="button" aria-label="설정">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </button>
     </div>
     <nav class="stack" id="tabstack" role="tablist" aria-label="주요 화면">
       <button class="stack__tab" role="tab" id="tab-slips" aria-controls="panel-slips" data-tab="slips"   data-short="전표"  aria-selected="true">매출 전표</button>
@@ -259,6 +261,19 @@
   </main>
 
 </div>
+
+<!-- ══════════ 설정 (별도 화면) ══════════ -->
+<section id="view-settings" hidden>
+  <header class="rail">
+    <div class="rail__meta">
+      <button id="btn-settings-back" class="iconbtn" type="button" aria-label="뒤로">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+      </button>
+      <h1 class="rail__title">설정</h1>
+    </div>
+  </header>
+  <main class="stage settings__stage panel" id="settings-body"></main>
+</section>
 
 <!-- ══════════ 모달 ══════════ -->
 <div class="sheetwrap" id="modal" hidden>

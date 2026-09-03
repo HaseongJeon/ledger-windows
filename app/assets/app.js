@@ -302,7 +302,8 @@ function wireChrome() {
   $("#btn-add-exp").onclick = () => expenseForm();
   $("#btn-add-slip-c").onclick = () => caseForm();
   $("#btn-add-slip").onclick = () => caseForm();
-  $("#btn-menu").onclick = openMenu;
+  $("#btn-menu").onclick = openSettingsView;
+  $("#btn-settings-back").onclick = closeSettingsView;
 
   $("#btn-search-toggle").onclick = () => {
     const btn = $("#btn-search-toggle"), shell = $("#finder-shell"), finder = shell.querySelector(".finder");
@@ -319,7 +320,11 @@ function wireChrome() {
   });
 
   $("#modal").addEventListener("click", e => { if (e.target.closest("[data-close]")) closeModal(); });
-  document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#modal").hidden) closeModal(); });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    if (!$("#modal").hidden) closeModal();
+    else if (!$("#view-settings").hidden) closeSettingsView();
+  });
 
   /* 내보내기 */
   $("#btn-export-slips").onclick   = () => exportSlips(visibleCases());
@@ -1301,29 +1306,57 @@ async function exportAll() {
   toast(kind === "xlsx" ? "5개 시트로 내보냈습니다" : "CSV 로 내려받았습니다");
 }
 
-/* ═══════════════ 메뉴 · 연결 설정 ═══════════════ */
-function openMenu() {
+/* ═══════════════ 설정 화면 ═══════════════ */
+function openSettingsView() {
+  renderSettings();
+  $("#view-app").hidden = true;
+  $("#view-settings").hidden = false;
+}
+
+function closeSettingsView() {
+  $("#view-settings").hidden = true;
+  $("#view-app").hidden = false;
+}
+
+function renderSettings() {
   const cfg = S.readConfig();
-  openModal({
-    title: "설정",
-    body: `<div class="rows">
+  const isElectron = !!window.electronAPI?.isElectron;
+  $("#settings-body").innerHTML = `
+    <section class="card">
+      <h2 class="card__h">계정</h2>
+      <div class="rows">
         ${rowText("저장 위치", S.store.mode === "cloud" ? "Supabase · 내 계정 전용" : "이 기기 · localStorage", S.store.mode === "cloud" ? "클라우드" : "로컬")}
         ${rowText("계정", "", S.store.user?.email || "로그인 안 함")}
         ${rowText("전표", "", `${S.store.cases.length}건`)}
         ${rowText("지출", "", `${S.store.expenses.length}건`)}
         ${rowText("예약", "", `${S.store.reservations.length}건`)}
       </div>
-      <div class="form" style="margin-top:14px">
-        ${window.electronAPI?.isElectron ? `<button class="btn btn--block" id="m-update" type="button">소프트웨어 업데이트</button>` : ""}
+      <p class="hint">로컬 모드에서 넣은 자료는 이 기기에만 있습니다. 여러 기기에서 이어 쓰려면 Supabase 로 연결하세요.</p>
+    </section>
+
+    ${isElectron ? `
+    <section class="card">
+      <h2 class="card__h">소프트웨어 업데이트</h2>
+      <button class="btn btn--block" id="m-update" type="button">업데이트 확인</button>
+    </section>` : ""}
+
+    <section class="card">
+      <h2 class="card__h">연결</h2>
+      <div class="form">
         <button class="btn btn--block" id="m-config" type="button">Supabase 연결 ${cfg.configured ? "다시 " : ""}설정</button>
         ${S.store.mode === "cloud" || S.store.user
           ? `<button class="btn btn--block" id="m-out" type="button">로그아웃</button>`
           : `<button class="btn btn--block" id="m-cloud" type="button">클라우드로 전환 (로그인)</button>`}
-        <button class="btn btn--block btn--danger" id="m-wipe" type="button">이 기기 데이터 지우기</button>
       </div>
-      <p class="hint">로컬 모드에서 넣은 자료는 이 기기에만 있습니다. 여러 기기에서 이어 쓰려면 Supabase 로 연결하세요.</p>`,
-    foot: `<button class="btn" data-close type="button">닫기</button>`
-  });
+    </section>
+
+    <section class="card">
+      <h2 class="card__h">위험 구역</h2>
+      <button class="btn btn--block btn--danger" id="m-wipe" type="button">이 기기 데이터 지우기</button>
+      <p class="hint">전표와 지출을 이 기기에서 전부 지웁니다. 되돌릴 수 없습니다.</p>
+    </section>
+    <div class="stage__pad"></div>`;
+
   if ($("#m-update")) $("#m-update").onclick = async () => {
     const btn = $("#m-update");
     btn.disabled = true;
@@ -1333,7 +1366,7 @@ function openMenu() {
       if (res.status === "up-to-date") {
         toast("이미 최신 버전입니다 (v" + res.version + ")");
         btn.disabled = false;
-        btn.textContent = "소프트웨어 업데이트";
+        btn.textContent = "업데이트 확인";
       } else if (res.status === "update-available") {
         btn.textContent = `v${res.version} 다운로드 중…`;
         const res2 = await window.electronAPI.downloadAndInstallUpdate();
@@ -1342,17 +1375,17 @@ function openMenu() {
         } else {
           toast("업데이트 실패: " + res2.message);
           btn.disabled = false;
-          btn.textContent = "소프트웨어 업데이트";
+          btn.textContent = "업데이트 확인";
         }
       } else {
         toast("업데이트 확인 실패: " + res.message);
         btn.disabled = false;
-        btn.textContent = "소프트웨어 업데이트";
+        btn.textContent = "업데이트 확인";
       }
     } catch (err) {
       toast("업데이트 확인 실패: " + err.message);
       btn.disabled = false;
-      btn.textContent = "소프트웨어 업데이트";
+      btn.textContent = "업데이트 확인";
     }
   };
   $("#m-config").onclick = () => openConfig();
