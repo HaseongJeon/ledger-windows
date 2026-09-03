@@ -1,14 +1,12 @@
 /* 의존성 없는 SVG 파이 차트 — 꽉 찬 조각 + 탭 인터랙션
-   숫자는 도형 위에 얹지 않는다: 합계는 카드 제목 옆으로, 비율은 조각이 충분히 클 때만
-   조각 안쪽에, 정확한 금액은 아래 범례로 — 세 자리로 나눠 각자 한 가지 정보만 맡는다. */
+   숫자는 도형 위에 얹지 않는다: 합계는 카드 제목 옆으로, 정확한 금액은 아래 범례로,
+   탭했을 때 이름표에 비율까지 — 세 자리로 나눠 각자 한 가지 정보만 맡는다. */
 import { won, shortWon, pct } from "./calc.js";
 
 const R = 92, CX = 110, CY = 110;   // 파이 반지름 · 중심
 const START = -Math.PI / 2;         // 12시 방향에서 시작해 시계 방향으로
 const GAP_RAD = 0;                  // 조각 사이 여백(라디안, 한쪽당) — 흰 틈 없이 맞닿게
 const MIN_SWEEP = 0.02;             // 값이 아주 작아도 유지하는 최소 조각 각도
-const LABEL_MIN_SWEEP = 0.7;        // 이 각도(약 40°) 이상인 조각에만 비율을 안에 적는다
-const LABEL_R = R * 0.62;           // 안쪽 라벨 위치 반지름
 const TIP_R = R + 16;               // 탭했을 때 이름표를 띄우는 반지름(조각 바깥)
 const POP = 9;                      // 선택 시 바깥으로 밀려나는 거리(px)
 const ENTER_MS = 900;               // 파이 전체가 시계방향으로 한 번에 그려지는 시간
@@ -24,14 +22,6 @@ function wedgePath(r, a0, a1) {
   const p0 = pt(r, a0), p1 = pt(r, a1);
   const large = a1 - a0 > Math.PI ? 1 : 0;
   return `M ${CX} ${CY} L ${p0.x} ${p0.y} A ${r} ${r} 0 ${large} 1 ${p1.x} ${p1.y} Z`;
-}
-
-/** 조각 색 위에서 글자가 잘 보이도록 밝기에 따라 흰/잉크 중 고른다 */
-function labelInk(hex) {
-  const n = hex.replace("#", "");
-  const r = parseInt(n.slice(0, 2), 16) || 0, g = parseInt(n.slice(2, 4), 16) || 0, b = parseInt(n.slice(4, 6), 16) || 0;
-  const luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luma > 0.62 ? "#0F1417" : "#FFFFFF";
 }
 
 /**
@@ -56,21 +46,12 @@ export function donut(slices, opts = {}) {
     const mid = (a0 + a1) / 2;
     const dir = { x: Math.cos(mid), y: Math.sin(mid) };
 
-    let label = "";
-    if (!single && sweep >= LABEL_MIN_SWEEP) {
-      const lp = pt(LABEL_R, mid);
-      label = `<text class="pie__label" x="${lp.x.toFixed(1)}" y="${lp.y.toFixed(1)}"
-        text-anchor="middle" dominant-baseline="middle" fill="${labelInk(d.color)}"
-        style="opacity:0">${pct(d.value, total)}</text>`;
-    }
-
     return `<g class="pie__seg" data-index="${i}" data-key="${esc(d.key)}" data-value="${d.value}"
       style="--pop-x:${(dir.x * POP).toFixed(2)}px;--pop-y:${(dir.y * POP).toFixed(2)}px;--seg-glow:${d.color}">
       <path class="pie__wedge" fill="${d.color}"
         data-a0="${a0}" data-a1="${a1}"
         style="d:path('${wedgePath(R, a0, a0 + 0.0005)}')"
       ><title>${esc(d.key)} · ${won(d.value)}원 (${pct(d.value, total)})</title></path>
-      ${label}
     </g>`;
   }).join("");
 
@@ -128,7 +109,8 @@ export function mountPie(pieEl, legendEl) {
     const a0 = Number(path.dataset.a0), a1 = Number(path.dataset.a1);
     const mid = (a0 + a1) / 2;
     const x = CX + TIP_R * Math.cos(mid), y = CY + TIP_R * Math.sin(mid);
-    tipText.textContent = segs[index].dataset.key;
+    const value = Number(segs[index].dataset.value || 0);
+    tipText.textContent = `${segs[index].dataset.key} · ${pct(value, total)}`;
     tipText.setAttribute("x", x);
     tipText.setAttribute("y", y);
     const box = tipText.getBBox();
@@ -148,9 +130,7 @@ export function mountPie(pieEl, legendEl) {
   // CSS로 두 path 문자열 사이를 전환하면 좌표를 직선으로 잇는 식이라 큰 조각일수록 부채꼴이
   // 일그러져 보인다 — 매 프레임 실제 각도로 경로를 다시 계산해야 원 모양 그대로 자란다.
   const wedges = segs.map(g => ({
-    g,
     path: g.querySelector(".pie__wedge"),
-    label: g.querySelector(".pie__label"),
     a0: Number(g.querySelector(".pie__wedge").dataset.a0),
     a1: Number(g.querySelector(".pie__wedge").dataset.a1),
   }));
@@ -162,7 +142,6 @@ export function mountPie(pieEl, legendEl) {
     wedges.forEach(w => {
       const end = Math.min(w.a1, Math.max(w.a0, swept));
       if (end > w.a0 + 0.0005) w.path.style.d = `path('${wedgePath(R, w.a0, end)}')`;
-      if (w.label && end >= w.a1 - 0.0005) w.label.style.opacity = "1";
     });
     if (t < 1) requestAnimationFrame(sweepFrame);
   })(sweepStart);

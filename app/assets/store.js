@@ -26,16 +26,34 @@ function normUrl(u) {
   return (u || "").trim().replace(/\/+$/, "").replace(/\/(rest|auth|realtime|storage)\/v1$/, "");
 }
 
+/* 앱에 함께 실려 오는 기본 연결 정보 (config.js) */
+function builtinConfig() {
+  const base = globalThis.APP_CONFIG || {};
+  return { url: normUrl(base.SUPABASE_URL), key: (base.SUPABASE_ANON_KEY || "").trim() };
+}
+
 export function readConfig() {
+  const builtin = builtinConfig();
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(LS.cfg) || "null"); } catch { /* 무시 */ }
-  const base = globalThis.APP_CONFIG || {};
-  const url = normUrl(saved?.url || base.SUPABASE_URL);
-  const key = (saved?.key || base.SUPABASE_ANON_KEY || "").trim();
+
+  /* 앱이 새 연결 정보를 들고 오면(키 교체·프로젝트 이전 등) 예전에 손으로 넣어 둔 값은 버립니다.
+     안 그러면 옛 값으로 계속 붙어서 "연결 설정을 다시 해야만 최신 장부가 보이는" 상태가 됩니다. */
+  if (saved && builtin.url && builtin.key &&
+      (saved.builtinUrl !== builtin.url || saved.builtinKey !== builtin.key)) {
+    localStorage.removeItem(LS.cfg);
+    saved = null;
+  }
+  const url = normUrl(saved?.url) || builtin.url;
+  const key = (saved?.key || "").trim() || builtin.key;
   return { url, key, configured: !!(url && key) };
 }
 export function writeConfig(url, key) {
-  localStorage.setItem(LS.cfg, JSON.stringify({ url: normUrl(url), key: key.trim() }));
+  const builtin = builtinConfig();
+  /* 저장 시점의 앱 기본값도 같이 적어 둡니다 — 나중에 기본값이 바뀌었는지 알아보려고 */
+  localStorage.setItem(LS.cfg, JSON.stringify({
+    url: normUrl(url), key: key.trim(), builtinUrl: builtin.url, builtinKey: builtin.key
+  }));
 }
 export function clearConfig() { localStorage.removeItem(LS.cfg); }
 
@@ -125,12 +143,81 @@ function scopedKey(base) {
 }
 
 /* ── Supabase 클라이언트 ── */
+let clientFor = "";
 export async function connect() {
   const { url, key, configured } = readConfig();
   if (!configured) throw new Error("Supabase URL / anon key 가 비어 있습니다.");
+  if (store.sb && clientFor === url + "|" + key) return store.sb;   // 같은 설정이면 클라이언트를 새로 만들지 않음
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.45.4");
   store.sb = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } });
+  clientFor = url + "|" + key;
+  /* 토큰이 새로 발급되면 store.user 도 같이 최신으로 맞춥니다
+     (실시간 소켓 토큰은 supabase-js 가 알아서 다시 넣어 줍니다) */
+  store.sb.auth.onAuthStateChange((event, session) => {
+    if (session) { store.user = session.user; store.mode = "cloud"; }
+    else if (event === "SIGNED_OUT") { store.user = null; store.mode = "local"; }
+  });
   return store.sb;
+}
+
+/* ── 토큰(JWT) 관리 ──
+   액세스 토큰은 1시간이면 만료됩니다. 앱을 오래 켜 두거나 휴대폰에서 한참 뒤에
+   다시 열면 만료된 토큰으로 조회가 나가서 "JWT expired" 같은 영문 오류가 떴고,
+   그때 화면이 옛 자료에 멈춰 있었습니다. 아래에서 만료를 미리·자동으로 처리합니다. */
+
+/* 토큰이 만료됐거나 권한이 없어서 난 오류인지 — 다시 로그인/갱신하면 풀리는 종류 */
+export function isAuthError(err) {
+  if (!err) return false;
+  if (err.sessionExpired) return true;
+  const code = String(err.code || "");
+  const status = Number(err.status || err.statusCode || 0);
+  const m = (err.message || "").toLowerCase();
+  return status === 401 || code === "PGRST301" || code === "PGRST302" ||
+         m.includes("jwt") || m.includes("refresh token") ||
+         m.includes("api key") || m.includes("not authenticated");
+}
+function sessionExpired() {
+  return Object.assign(new Error("로그인이 만료됐습니다. 다시 로그인해 주세요."), { sessionExpired: true });
+}
+function expiresSoon(session, sec = 60) {
+  return !session?.expires_at || session.expires_at * 1000 - Date.now() < sec * 1000;
+}
+
+/* 토큰을 새로 받아 옵니다. 실패하면 남아 있는 세션을 지우고 null.
+   동시에 여러 번 부르면 refresh token 이 꼬이므로 한 번만 돌게 묶어 둡니다. */
+let refreshing = null;
+function refreshOrClear() {
+  if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
+  return refreshing;
+}
+async function doRefresh() {
+  try {
+    const { data, error } = await store.sb.auth.refreshSession();
+    if (error || !data?.session) throw error || new Error("no session");
+    store.user = data.session.user;
+    store.mode = "cloud";
+    return data.session;
+  } catch {
+    try { await store.sb.auth.signOut({ scope: "local" }); } catch { /* 무시 */ }
+    store.user = null;
+    store.mode = "local";
+    return null;
+  }
+}
+
+/* Supabase 조회/저장 한 번 실행 — 토큰 문제면 새로 받아서 딱 한 번만 다시 시도 */
+async function q(build) {
+  const once = async () => {
+    const { data, error } = await build();
+    if (error) throw error;
+    return data;
+  };
+  try { return await once(); }
+  catch (err) {
+    if (!isAuthError(err)) throw err;
+    if (!(await refreshOrClear())) throw sessionExpired();
+    return await once();
+  }
 }
 
 export async function signIn(email, password) {
@@ -161,9 +248,20 @@ export async function signUpCloud(email, password) {
 }
 export async function currentSession() {
   if (!store.sb) await connect();
-  const { data } = await store.sb.auth.getSession();
-  if (data?.session) { store.user = data.session.user; store.mode = "cloud"; }
-  return data?.session || null;
+  let session = null;
+  try {
+    const { data, error } = await store.sb.auth.getSession();
+    if (error) throw error;
+    session = data?.session || null;
+  } catch { session = null; }
+
+  /* 이미 만료됐거나 곧 만료될 토큰으로 첫 조회를 하면 "JWT expired" 가 뜹니다 —
+     화면을 열기 전에 미리 새로 받아 둡니다. 받아오지 못하면 세션을 깨끗이 지우고
+     로그인 화면으로 보냅니다(반쯤 죽은 세션이 남아 있지 않도록). */
+  if (session && expiresSoon(session)) session = await refreshOrClear();
+
+  if (session) { store.user = session.user; store.mode = "cloud"; }
+  return session;
 }
 export async function signOut() {
   if (store.sb && store.user) {
@@ -177,17 +275,14 @@ export async function signOut() {
 /* ── 불러오기 ── */
 export async function loadAll() {
   if (store.mode === "cloud") {
-    const [c, e, r] = await Promise.all([
-      store.sb.from("cases").select("*").order("date", { ascending: false }),
-      store.sb.from("expenses").select("*").order("created_at", { ascending: false }),
-      store.sb.from("reservations").select("*").order("date", { ascending: true })
+    const cases = await q(() => store.sb.from("cases").select("*").order("date", { ascending: false }));
+    const [e, r] = await Promise.all([
+      q(() => store.sb.from("expenses").select("*").order("created_at", { ascending: false })),
+      q(() => store.sb.from("reservations").select("*").order("date", { ascending: true }))
     ]);
-    if (c.error) throw c.error;
-    if (e.error) throw e.error;
-    if (r.error) throw r.error;
-    store.cases = c.data.map(fromRowCase);
-    store.expenses = e.data.map(fromRowExp);
-    store.reservations = r.data.map(fromRowResv);
+    store.cases = cases.map(fromRowCase);
+    store.expenses = e.map(fromRowExp);
+    store.reservations = r.map(fromRowResv);
   } else {
     store.cases = readLS(scopedKey(LS.cases));
     store.expenses = readLS(scopedKey(LS.exps));
@@ -248,12 +343,10 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id" + Date.now() +
 export async function saveCase(c) {
   if (store.mode === "cloud") {
     const row = toRowCase(c);
-    const q = c.id ? store.sb.from("cases").update(row).eq("id", c.id).select()
-                   : store.sb.from("cases").insert(row).select();
-    const { data, error } = await q;
-    if (error) throw error;
-    const saved = fromRowCase(data[0]);
-    upsert(store.cases, saved);
+    const data = await q(() => c.id
+      ? store.sb.from("cases").update(row).eq("id", c.id).select()
+      : store.sb.from("cases").insert(row).select());
+    upsert(store.cases, fromRowCase(data[0]));
   } else {
     if (!c.id) c.id = uid();
     upsert(store.cases, { ...c });
@@ -264,8 +357,7 @@ export async function saveCase(c) {
 
 export async function deleteCase(id) {
   if (store.mode === "cloud") {
-    const { error } = await store.sb.from("cases").delete().eq("id", id);
-    if (error) throw error;
+    await q(() => store.sb.from("cases").delete().eq("id", id));
   }
   store.cases = store.cases.filter(x => x.id !== id);
   if (store.mode === "local") saveLS();
@@ -275,10 +367,9 @@ export async function deleteCase(id) {
 export async function saveExpense(e) {
   if (store.mode === "cloud") {
     const row = toRowExp(e);
-    const q = e.id ? store.sb.from("expenses").update(row).eq("id", e.id).select()
-                   : store.sb.from("expenses").insert(row).select();
-    const { data, error } = await q;
-    if (error) throw error;
+    const data = await q(() => e.id
+      ? store.sb.from("expenses").update(row).eq("id", e.id).select()
+      : store.sb.from("expenses").insert(row).select());
     upsert(store.expenses, fromRowExp(data[0]));
   } else {
     if (!e.id) e.id = uid();
@@ -290,8 +381,7 @@ export async function saveExpense(e) {
 
 export async function deleteExpense(id) {
   if (store.mode === "cloud") {
-    const { error } = await store.sb.from("expenses").delete().eq("id", id);
-    if (error) throw error;
+    await q(() => store.sb.from("expenses").delete().eq("id", id));
   }
   store.expenses = store.expenses.filter(x => x.id !== id);
   if (store.mode === "local") saveLS();
@@ -301,10 +391,9 @@ export async function deleteExpense(id) {
 export async function saveReservation(r) {
   if (store.mode === "cloud") {
     const row = toRowResv(r);
-    const q = r.id ? store.sb.from("reservations").update(row).eq("id", r.id).select()
-                   : store.sb.from("reservations").insert(row).select();
-    const { data, error } = await q;
-    if (error) throw error;
+    const data = await q(() => r.id
+      ? store.sb.from("reservations").update(row).eq("id", r.id).select()
+      : store.sb.from("reservations").insert(row).select());
     upsert(store.reservations, fromRowResv(data[0]));
   } else {
     if (!r.id) r.id = uid();
@@ -316,8 +405,7 @@ export async function saveReservation(r) {
 
 export async function deleteReservation(id) {
   if (store.mode === "cloud") {
-    const { error } = await store.sb.from("reservations").delete().eq("id", id);
-    if (error) throw error;
+    await q(() => store.sb.from("reservations").delete().eq("id", id));
   }
   store.reservations = store.reservations.filter(x => x.id !== id);
   if (store.mode === "local") saveLS();
@@ -330,17 +418,42 @@ function upsert(arr, item) {
 }
 
 /* ── 실시간 동기화: 내 다른 기기에서 입력하면 바로 반영 ── */
+let channel = null;
+let joinedOnce = false;
 export function watch() {
   if (store.mode !== "cloud" || !store.sb) return;
+  unwatch();
   const onEvent = table => payload => {
     if (payload.eventType === "INSERT") store.onRemoteInsert(table, payload.new);
     refresh();
   };
-  store.sb.channel("jpc-live")
+  channel = store.sb.channel("jpc-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "cases" }, onEvent("cases"))
     .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, onEvent("expenses"))
     .on("postgres_changes", { event: "*", schema: "public", table: "reservations" }, onEvent("reservations"))
-    .subscribe();
+    .subscribe(status => {
+      if (status !== "SUBSCRIBED") return;
+      // 끊겼다 다시 붙은 경우에만, 그동안 다른 기기에서 들어온 것들을 한 번 당겨옵니다
+      // (처음 붙을 때는 방금 읽어 온 참이라 그대로 둡니다)
+      if (joinedOnce) refresh();
+      joinedOnce = true;
+    });
+}
+
+export function unwatch() {
+  if (!channel) return;
+  try { store.sb?.removeChannel(channel); } catch { /* 무시 */ }
+  channel = null;
+}
+
+/* 앱을 다시 앞으로 가져왔거나(백그라운드 → 포그라운드) 인터넷이 돌아왔을 때 호출.
+   휴대폰에서는 실시간 소켓이 조용히 끊긴 채로 남아, 다른 기기에서 넣은 전표가
+   영영 안 들어오는 일이 잦습니다. 그래서 끊겼으면 다시 붙이고 자료도 새로 읽습니다. */
+export async function resume() {
+  if (store.mode !== "cloud" || !store.sb) return;
+  const st = channel?.state;
+  if (st !== "joined" && st !== "joining") watch();
+  await loadAll();
 }
 let pending = null;
 function refresh() {

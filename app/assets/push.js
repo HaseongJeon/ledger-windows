@@ -28,6 +28,12 @@ async function upsertToken(platform, token) {
 }
 
 async function initAndroid() {
+  // google-services.json 없이 빌드된 APK(기본값)는 네이티브 Firebase가 아예
+  // 초기화되지 않아, PushNotifications.register()가 FirebaseMessaging.getInstance()를
+  // 호출하는 순간 네이티브 예외가 나고 Capacitor가 이를 앱 전체를 죽이는 방식으로
+  // 다시 던진다(js try/catch로 못 막음). config.js 의 FIREBASE 값이 비어 있으면
+  // "알림 기능만 꺼짐"이라는 계약대로 아예 시도하지 않는다.
+  if (!readFirebaseConfig().configured) return;
   // 번들러 없이 쓰는 앱이라 npm import 대신, Capacitor가 WebView에 심어주는
   // 전역 객체로 네이티브 플러그인을 그대로 불러씀 (Capacitor의 공식 no-bundler 사용법).
   const PushNotifications = globalThis.Capacitor?.Plugins?.PushNotifications;

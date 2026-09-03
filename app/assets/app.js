@@ -23,20 +23,26 @@ async function boot() {
   registerSW();
   wireChrome();
 
-  if (S.isLocalPinned()) {
-    S.restoreLocalSession();
-    return enterApp();
-  }
   const cfg = S.readConfig();
+
+  /* 클라우드 세션이 살아 있으면 언제나 클라우드로 엽니다.
+     예전에는 "로컬 고정" 표시가 먼저라서, 이 기기에서 만든 계정으로 한 번 로그인하면
+     그 뒤로는 계속 로컬 자료만 보였고 Supabase 연결을 다시 설정해야 최신 장부가 나왔습니다. */
   if (cfg.configured) {
     try {
       const sess = await S.currentSession();
-      if (sess) return enterApp();
-    } catch (err) { /* 설정 오류 → 로그인 화면에서 안내 */ }
-    showAuth();
-    return;
+      if (sess) { S.pinLocal(false); return enterApp(); }
+    } catch (err) { console.warn("세션 확인 실패:", err); }
   }
-  showAuth("Supabase 연결 정보가 없습니다. 아래에서 설정하거나, 이 기기에서 계정을 만들어 먼저 써보세요.");
+
+  if (S.isLocalPinned()) {
+    if (S.restoreLocalSession() || !cfg.configured) return enterApp();
+    S.pinLocal(false);   // 로컬 계정은 없는데 로컬로 고정돼 있던 상태 → 로그인 화면으로
+  }
+
+  showAuth(cfg.configured
+    ? ""
+    : "Supabase 연결 정보가 없습니다. 아래에서 설정하거나, 이 기기에서 계정을 만들어 먼저 써보세요.");
 }
 
 function showAuth(msg = "") {
@@ -62,15 +68,45 @@ async function enterApp() {
   $("#who").textContent = S.store.user?.email || "이 기기에만 저장 중";
 
   S.store.onChange = renderCurrent;
+  wireLiveRefresh();   // 첫 불러오기가 실패해도 앱을 다시 열면 스스로 복구되도록 먼저 걸어 둠
   try {
     await S.loadAll();
     S.watch();
     initPush();
   } catch (err) {
-    toast("불러오기 실패: " + (err.message || err));
+    if (handleAuthLoss(err)) return;
+    toast("불러오기 실패: " + translateAuthError(err));
   }
   applyPeriodDefaultsToFinder();
   switchTab(state.tab);
+}
+
+/* 토큰이 만료돼 되살릴 수 없을 때 — 옛 화면에 멈춰 있지 말고 로그인 화면으로 */
+function handleAuthLoss(err) {
+  if (!err || !S.isAuthError(err)) return false;
+  S.signOut().catch(() => {});
+  S.pinLocal(false);
+  showAuth("로그인이 만료됐습니다. 다시 로그인해 주세요.");
+  return true;
+}
+
+/* 앱을 다시 켜거나 인터넷이 돌아오면 장부를 새로 읽어옵니다.
+   휴대폰에서는 실시간 소켓이 조용히 끊겨서, 다른 기기에서 넣은 전표가
+   안 보인 채로 남아 있는 일이 잦습니다. */
+let liveTimer = 0;
+function wireLiveRefresh() {
+  if (wireLiveRefresh.done) return;
+  wireLiveRefresh.done = true;
+  const pull = () => {
+    if (document.visibilityState !== "visible" || S.store.mode !== "cloud") return;
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => {
+      S.resume().catch(err => { if (!handleAuthLoss(err)) console.warn("새로고침 실패:", err); });
+    }, 300);
+  };
+  document.addEventListener("visibilitychange", pull);
+  window.addEventListener("focus", pull);
+  window.addEventListener("online", pull);
 }
 
 function applyPeriodDefaultsToFinder() {
@@ -142,15 +178,24 @@ function wireChrome() {
     $("#auth-msg").textContent = ""; $("#auth-msg").classList.remove("auth__msg--info");
     const email = $("#auth-email").value, pass = $("#auth-pass").value;
     try {
-      const local = await S.signInLocal(email, pass);
-      if (local) {
-        S.pinLocal(true);
-        await enterApp();
+      /* Supabase 가 연결돼 있으면 클라우드 로그인이 먼저입니다.
+         (이 기기에만 있는 옛 계정이 같은 이메일이라는 이유로 로컬 모드에 갇히지 않도록) */
+      if (S.readConfig().configured) {
+        try {
+          await S.signIn(email, pass);
+          S.pinLocal(false);
+        } catch (cloudErr) {
+          // 서버에 그런 계정이 없거나 인터넷이 안 될 때만, 이 기기 계정으로 들어갑니다
+          const local = await S.signInLocal(email, pass).catch(() => null);
+          if (!local) throw cloudErr;
+          S.pinLocal(true);
+        }
       } else {
-        await S.signIn(email, pass);
-        S.pinLocal(false);
-        await enterApp();
+        const local = await S.signInLocal(email, pass);
+        if (!local) throw new Error("이 기기에 그 계정이 없습니다. 회원가입을 먼저 해 주세요.");
+        S.pinLocal(true);
       }
+      await enterApp();
     } catch (err) {
       $("#auth-msg").textContent = translateAuthError(err);
     } finally {
@@ -256,7 +301,22 @@ function wireChrome() {
 
   $("#btn-add-exp").onclick = () => expenseForm();
   $("#btn-add-slip-c").onclick = () => caseForm();
+  $("#btn-add-slip").onclick = () => caseForm();
   $("#btn-menu").onclick = openMenu;
+
+  $("#btn-search-toggle").onclick = () => {
+    const btn = $("#btn-search-toggle"), shell = $("#finder-shell"), finder = shell.querySelector(".finder");
+    const open = !shell.classList.contains("is-open");
+    shell.style.maxHeight = open ? finder.scrollHeight + "px" : "0px";
+    shell.classList.toggle("is-open", open);
+    btn.setAttribute("aria-expanded", String(open));
+    btn.setAttribute("aria-label", open ? "검색 닫기" : "검색 열기");
+    if (open) $("#f-company").focus({ preventScroll: true });
+  };
+  window.addEventListener("resize", () => {
+    const shell = $("#finder-shell");
+    if (shell.classList.contains("is-open")) shell.style.maxHeight = shell.querySelector(".finder").scrollHeight + "px";
+  });
 
   $("#modal").addEventListener("click", e => { if (e.target.closest("[data-close]")) closeModal(); });
   document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#modal").hidden) closeModal(); });
@@ -279,6 +339,9 @@ function translateAuthError(err) {
   if (m.includes("password") && m.includes("least")) return "비밀번호가 너무 짧습니다. 6자 이상으로 입력하세요.";
   if (m.includes("unable to validate email") || m.includes("invalid email")) return "이메일 형식이 올바르지 않습니다.";
   if (m.includes("signups not allowed") || m.includes("signup is disabled")) return "지금은 새 가입을 받지 않습니다. 관리자에게 문의하세요.";
+  if (m.includes("api key")) return "Supabase 연결 정보(anon key)가 맞지 않습니다. 설정 → Supabase 연결에서 확인하세요.";
+  if (m.includes("jwt") || m.includes("refresh token") || m.includes("token")) return "로그인이 만료됐습니다. 다시 로그인해 주세요.";
+  console.warn("auth error:", err);
   return err?.message || "로그인하지 못했습니다.";
 }
 
@@ -331,12 +394,10 @@ function renderSlips() {
     };
   }
   $("#slips-tally").innerHTML = tallyHTML(C.totals(rows), rows.length);
-  $("#tally-add").onclick = () => caseForm();
 }
 
 function slipCard(c) {
-  const primary = c.items?.[0]?.type || "";
-  return `<button class="slip" type="button" data-id="${c.id}" data-type="${esc(primary)}">
+  return `<button class="slip" type="button" data-id="${c.id}">
     <span class="slip__top">
       <span class="slip__date">${C.fmtDateFull(c.date)}</span>
       ${(c.items || []).map(i => `<span class="slip__type" data-t="${esc(i.type)}">${esc(i.type)}</span>`).join("")}
@@ -381,8 +442,7 @@ function slipTable(rows) {
 }
 
 function tallyHTML(t, count) {
-  return `<div class="tally__bar"><p class="tally__h">합계 · ${count}건</p>
-      <button class="tally__add" id="tally-add" type="button">신규 전표</button></div>
+  return `<div class="tally__bar"><p class="tally__h">합계 · ${count}건</p></div>
     ${tallyRow("견적가 합", C.won(t.price))}
     ${tallyRow("미수금 합", C.won(t.unpaid), "tally__v--due")}
     ${tallyRow("실제 들어온 돈", C.won(t.received))}
