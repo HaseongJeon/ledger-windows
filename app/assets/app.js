@@ -1307,6 +1307,39 @@ async function exportAll() {
 }
 
 /* ═══════════════ 설정 화면 ═══════════════ */
+function isNewerVersion(a, b) {
+  const pa = String(a).replace(/^v/, "").split(".").map(n => parseInt(n, 10));
+  const pb = String(b).replace(/^v/, "").split(".").map(n => parseInt(n, 10));
+  if (pa.some(isNaN) || pb.some(isNaN)) return false;
+  for (let i = 0; i < 3; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x > y) return true;
+    if (x < y) return false;
+  }
+  return false;
+}
+
+/** 안드로이드: GitHub 최신 릴리스를 확인해 새 버전이면 APK 다운로드 링크를 브라우저로 연다
+    (기기에 직접 설치 명령을 내릴 수 없어, 다운로드 → 알림 탭 → 설치는 사용자가 마무리한다) */
+async function checkAndroidUpdate() {
+  const { App, Browser } = window.Capacitor.Plugins;
+  const info = await App.getInfo();
+  const res = await fetch("https://api.github.com/repos/HaseongJeon/ledger/releases/latest", {
+    headers: { Accept: "application/vnd.github+json" }
+  });
+  if (!res.ok) throw new Error(`GitHub API 응답 오류 (${res.status})`);
+  const data = await res.json();
+  const latest = String(data.tag_name || "").replace(/^v/, "");
+  const asset = (data.assets || []).find(a => /\.apk$/i.test(a.name));
+  if (!asset) { toast("설치 파일을 찾지 못했습니다"); return; }
+  if (!isNewerVersion(latest, info.version)) {
+    toast("이미 최신 버전입니다 (v" + info.version + ")");
+    return;
+  }
+  await Browser.open({ url: asset.browser_download_url });
+  toast(`v${latest} 다운로드를 시작합니다. 완료되면 알림을 눌러 설치해 주세요.`);
+}
+
 function openSettingsView() {
   renderSettings();
   $("#view-app").hidden = true;
@@ -1321,6 +1354,7 @@ function closeSettingsView() {
 function renderSettings() {
   const cfg = S.readConfig();
   const isElectron = !!window.electronAPI?.isElectron;
+  const isAndroid = window.Capacitor?.getPlatform?.() === "android";
   $("#settings-body").innerHTML = `
     <section class="card">
       <h2 class="card__h">계정</h2>
@@ -1334,7 +1368,7 @@ function renderSettings() {
       <p class="hint">로컬 모드에서 넣은 자료는 이 기기에만 있습니다. 여러 기기에서 이어 쓰려면 Supabase 로 연결하세요.</p>
     </section>
 
-    ${isElectron ? `
+    ${isElectron || isAndroid ? `
     <section class="card">
       <h2 class="card__h">소프트웨어 업데이트</h2>
       <button class="btn btn--block" id="m-update" type="button">업데이트 확인</button>
@@ -1362,28 +1396,27 @@ function renderSettings() {
     btn.disabled = true;
     btn.textContent = "확인 중…";
     try {
-      const res = await window.electronAPI.checkForSoftwareUpdate();
-      if (res.status === "up-to-date") {
-        toast("이미 최신 버전입니다 (v" + res.version + ")");
-        btn.disabled = false;
-        btn.textContent = "업데이트 확인";
-      } else if (res.status === "update-available") {
-        btn.textContent = `v${res.version} 다운로드 중…`;
-        const res2 = await window.electronAPI.downloadAndInstallUpdate();
-        if (res2.status === "launched") {
-          toast("설치 프로그램을 실행합니다. 안내에 따라 진행해 주세요.");
+      if (isElectron) {
+        const res = await window.electronAPI.checkForSoftwareUpdate();
+        if (res.status === "up-to-date") {
+          toast("이미 최신 버전입니다 (v" + res.version + ")");
+        } else if (res.status === "update-available") {
+          btn.textContent = `v${res.version} 다운로드 중…`;
+          const res2 = await window.electronAPI.downloadAndInstallUpdate();
+          if (res2.status === "launched") {
+            toast("설치 프로그램을 실행합니다. 안내에 따라 진행해 주세요.");
+          } else {
+            toast("업데이트 실패: " + res2.message);
+          }
         } else {
-          toast("업데이트 실패: " + res2.message);
-          btn.disabled = false;
-          btn.textContent = "업데이트 확인";
+          toast("업데이트 확인 실패: " + res.message);
         }
-      } else {
-        toast("업데이트 확인 실패: " + res.message);
-        btn.disabled = false;
-        btn.textContent = "업데이트 확인";
+      } else if (isAndroid) {
+        await checkAndroidUpdate();
       }
     } catch (err) {
       toast("업데이트 확인 실패: " + err.message);
+    } finally {
       btn.disabled = false;
       btn.textContent = "업데이트 확인";
     }
